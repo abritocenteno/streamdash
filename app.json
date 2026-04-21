@@ -1,0 +1,84 @@
+{
+  "expo": {
+    "name": "StreamCam",
+    "slug": "streamcam",
+    "version": "1.0.0",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "scheme": "streamcam",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#111318"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.antigravity.streamcam",
+      "infoPlist": {
+        "NSCameraUsageDescription": "StreamCam needs camera access to livestream your dashcam footage.",
+        "NSMicrophoneUsageDescription": "StreamCam needs microphone access to include audio in the livestream.",
+        "NSLocationWhenInUseUsageDescription": "StreamCam needs location access to overlay GPS speed and coordinates on the stream.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "StreamCam needs background location to continue recording GPS data while streaming.",
+        "UIBackgroundModes": ["location", "audio"]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#111318"
+      },
+      "package": "com.antigravity.streamcam",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.INTERNET",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf"
+          ]
+        }
+      ],
+      "expo-secure-store",
+      "expo-screen-orientation",
+      "expo-media-library",
+      "@maplibre/maplibre-react-native",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "StreamCam needs location access to overlay GPS data on your stream.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "StreamCam needs camera access to livestream.",
+          "microphonePermission": "StreamCam needs microphone access for stream audio.",
+          "recordAudioAndroid": true
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
