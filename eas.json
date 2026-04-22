@@ -14,10 +14,6 @@
         "buildType": "apk",
         "gradleCommand": ":app:assembleDebug"
       },
-      "env": {
-        "EXPO_PUBLIC_CONVEX_URL": "",
-        "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": ""
-      }
     },
     "simulator": {
       "developmentClient": true,
@@ -28,8 +24,16 @@
     },
     "preview": {
       "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
       "ios": {
         "simulator": false
+      },
+      "env": {
+        "EXPO_PUBLIC_CONVEX_URL": "https://abundant-hornet-458.eu-west-1.convex.cloud",
+        "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_test_aW1wcm92ZWQtcmFjY29vbi0xNi5jbGVyay5hY2NvdW50cy5kZXYk",
+        "EXPO_PUBLIC_MAPTILER_KEY": "fQ2KBRnpto9JCdadSkvR"
       }
     },
     "production": {
