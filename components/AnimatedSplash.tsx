@@ -1,6 +1,5 @@
 import React, { useRef } from "react";
 import { Animated, StyleSheet, Text, View } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
 import LottieView from "lottie-react-native";
 import { Colors, Typography } from "@/constants/theme";
 
@@ -32,15 +31,6 @@ export function AnimatedSplash({ onFinish }: AnimatedSplashProps) {
         style={styles.lottie}
         onAnimationFinish={handleAnimationFinish}
       />
-      {/* Brand mark — record button aesthetic */}
-      <View style={styles.brandMark}>
-        <View style={styles.brandRing}>
-          <LinearGradient
-            colors={[Colors.onPrimaryContainer, Colors.inversePrimary]}
-            style={styles.brandDot}
-          />
-        </View>
-      </View>
       <View style={styles.wordmarkRow}>
         <Text style={styles.wordmark}>STREAM</Text>
         <Text style={styles.wordmarkAccent}>DASH</Text>
@@ -63,24 +53,6 @@ const styles = StyleSheet.create({
     width: 160,
     height: 160,
     marginBottom: 8,
-  },
-  brandMark: {
-    marginBottom: 4,
-  },
-  brandRing: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    borderWidth: 2,
-    borderColor: Colors.inversePrimary,
-    backgroundColor: Colors.recordRedDim,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  brandDot: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
   },
   wordmarkRow: {
     flexDirection: "row",

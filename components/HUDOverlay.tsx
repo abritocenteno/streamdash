@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { Animated, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors, Typography } from "@/constants/theme";
 import { GPSPoint } from "@/hooks/useGPS";
 
@@ -54,14 +55,15 @@ function LiveBadge({ isLive }: { isLive: boolean }) {
 // ─── HUD Overlay ────────────────────────────────────────────────────────────
 
 export function HUDOverlay({ isLive, duration, location }: HUDOverlayProps) {
+  const insets = useSafeAreaInsets();
   const speedKph = location ? (location.speed * 3.6).toFixed(0) : "0";
   const lat = location ? location.lat.toFixed(5) : "0.00000";
   const lng = location ? location.lng.toFixed(5) : "0.00000";
 
   return (
     <View style={styles.container} pointerEvents="box-none">
-      {/* Top row — Live badge + Timer */}
-      <View style={styles.topRow}>
+      {/* Top row — Live badge + Timer, aligned with mic button */}
+      <View style={[styles.topRow, { paddingTop: insets.top + 8 }]}>
         <LiveBadge isLive={isLive} />
         {isLive && (
           <View style={styles.timerBadge}>

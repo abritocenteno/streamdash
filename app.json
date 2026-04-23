@@ -1,11 +1,12 @@
 {
   "expo": {
-    "name": "StreamCam",
-    "slug": "streamcam",
+    "name": "StreamDash",
+    "slug": "streamdash",
+    "owner": "abelbrito",
     "version": "1.0.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
-    "scheme": "streamcam",
+    "scheme": "streamdash",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "splash": {
@@ -15,13 +16,16 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.antigravity.streamcam",
+      "bundleIdentifier": "com.antigravity.streamdash",
       "infoPlist": {
-        "NSCameraUsageDescription": "StreamCam needs camera access to livestream your dashcam footage.",
-        "NSMicrophoneUsageDescription": "StreamCam needs microphone access to include audio in the livestream.",
-        "NSLocationWhenInUseUsageDescription": "StreamCam needs location access to overlay GPS speed and coordinates on the stream.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "StreamCam needs background location to continue recording GPS data while streaming.",
-        "UIBackgroundModes": ["location", "audio"]
+        "NSCameraUsageDescription": "StreamDash needs camera access to livestream your dashcam footage.",
+        "NSMicrophoneUsageDescription": "StreamDash needs microphone access to include audio in the livestream.",
+        "NSLocationWhenInUseUsageDescription": "StreamDash needs location access to overlay GPS speed and coordinates on the stream.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "StreamDash needs background location to continue recording GPS data while streaming.",
+        "UIBackgroundModes": [
+          "location",
+          "audio"
+        ]
       }
     },
     "android": {
@@ -29,7 +33,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#111318"
       },
-      "package": "com.antigravity.streamcam",
+      "package": "com.antigravity.streamdash",
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
@@ -38,7 +42,10 @@
         "android.permission.ACCESS_BACKGROUND_LOCATION",
         "android.permission.INTERNET",
         "android.permission.READ_MEDIA_VIDEO",
-        "android.permission.WRITE_EXTERNAL_STORAGE"
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
       ]
     },
     "web": {
@@ -48,6 +55,7 @@
     },
     "plugins": [
       "expo-router",
+      "expo-video",
       [
         "expo-font",
         {
@@ -63,22 +71,30 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "StreamCam needs location access to overlay GPS data on your stream.",
+          "locationAlwaysAndWhenInUsePermission": "StreamDash needs location access to overlay GPS data on your stream.",
           "isIosBackgroundLocationEnabled": true,
           "isAndroidBackgroundLocationEnabled": true
         }
       ],
       [
-        "expo-camera",
+        "react-native-vision-camera",
         {
-          "cameraPermission": "StreamCam needs camera access to livestream.",
-          "microphonePermission": "StreamCam needs microphone access for stream audio.",
-          "recordAudioAndroid": true
+          "cameraPermissionText": "StreamDash needs camera access to livestream your dashcam footage.",
+          "enableMicrophonePermission": true,
+          "microphonePermissionText": "StreamDash needs microphone access for stream audio."
         }
       ]
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "b7d82e0b-4282-4b26-bf38-4b0542a79dc8"
+      }
     }
   }
 }

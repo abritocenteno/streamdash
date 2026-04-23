@@ -2,6 +2,7 @@ import { Tabs } from "expo-router";
 import { StyleSheet, View } from "react-native";
 import { Colors, Typography } from "@/constants/theme";
 import { Ionicons } from "@expo/vector-icons";
+import { CameraProvider } from "@/contexts/CameraContext";
 
 type IoniconsName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -25,6 +26,7 @@ function TabIcon({
 
 export default function AppLayout() {
   return (
+    <CameraProvider>
     <Tabs
       screenOptions={{
         headerShown: false,
@@ -88,6 +90,7 @@ export default function AppLayout() {
       <Tabs.Screen name="replay" options={{ href: null }} />
       <Tabs.Screen name="history" options={{ href: null }} />
     </Tabs>
+    </CameraProvider>
   );
 }
 

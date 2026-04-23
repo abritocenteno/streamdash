@@ -1,10 +1,16 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
   TextInput,
+  FlatList,
+  ActivityIndicator,
+  Keyboard,
+  Animated,
+  Dimensions,
+  PanResponder,
 } from "react-native";
 import {
   MapView,
@@ -16,16 +22,98 @@ import {
   type CameraRef,
 } from "@maplibre/maplibre-react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "expo-router";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useGPS } from "@/hooks/useGPS";
 import { Colors, Typography, Radius } from "@/constants/theme";
 import { Ionicons } from "@expo/vector-icons";
+import { MiniCam } from "@/components/MiniCam";
 
 const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY;
 const STYLE_URL = MAPTILER_KEY
   ? `https://api.maptiler.com/maps/streets-v2-dark/style.json?key=${MAPTILER_KEY}`
   : "https://demotiles.maplibre.org/style.json";
+
+// ─── Types ────────────────────────────────────────────────────────────────
+
+interface GeocodingFeature {
+  id: string;
+  place_name: string;
+  center: [number, number]; // [lng, lat]
+}
+
+interface RouteStep {
+  instruction: string;
+  distanceText: string;
+  iconName: React.ComponentProps<typeof Ionicons>["name"];
+  endLocation: [number, number];
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────
+
+function haversineMeters(a: [number, number], b: [number, number]): number {
+  const R = 6371000;
+  const dLat = ((b[1] - a[1]) * Math.PI) / 180;
+  const dLng = ((b[0] - a[0]) * Math.PI) / 180;
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((a[1] * Math.PI) / 180) *
+      Math.cos((b[1] * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+}
+
+function formatDist(meters: number): string {
+  if (meters < 1000) return `${Math.round(meters)} m`;
+  return `${(meters / 1000).toFixed(1)} km`;
+}
+
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m === 0) return "< 1 min";
+  return `${m} min`;
+}
+
+function stepIcon(
+  type: string,
+  modifier: string
+): React.ComponentProps<typeof Ionicons>["name"] {
+  if (type === "arrive") return "location";
+  if (type === "depart") return "navigate-outline";
+  if (type === "roundabout" || type === "rotary") return "refresh-outline";
+  if (modifier === "uturn") return "return-down-back-outline";
+  if (modifier === "left" || modifier === "sharp left") return "arrow-back-outline";
+  if (modifier === "right" || modifier === "sharp right") return "arrow-forward-outline";
+  if (modifier === "slight left") return "arrow-up-outline";
+  if (modifier === "slight right") return "arrow-up-outline";
+  return "arrow-up-outline";
+}
+
+function buildInstruction(type: string, modifier: string, name: string): string {
+  const road = name ? ` onto ${name}` : "";
+  if (type === "depart") return `Head ${modifier}${road}`;
+  if (type === "arrive") return "You have arrived";
+  if (type === "turn") {
+    if (modifier === "left") return `Turn left${road}`;
+    if (modifier === "right") return `Turn right${road}`;
+    if (modifier === "slight left") return `Bear left${road}`;
+    if (modifier === "slight right") return `Bear right${road}`;
+    if (modifier === "sharp left") return `Sharp left${road}`;
+    if (modifier === "sharp right") return `Sharp right${road}`;
+    if (modifier === "uturn") return "Make a U-turn";
+  }
+  if (type === "merge") return `Merge${road}`;
+  if (type === "on ramp" || type === "ramp") return `Take the ramp${road}`;
+  if (type === "off ramp") return `Take the exit${road}`;
+  if (type === "roundabout" || type === "rotary") return `Take the roundabout exit${road}`;
+  if (type === "fork") return modifier?.includes("left") ? `Keep left${road}` : `Keep right${road}`;
+  if (type === "new name" || type === "continue") return `Continue${road}`;
+  if (type === "end of road") return modifier === "left" ? `Turn left${road}` : `Turn right${road}`;
+  return `Continue${road}`;
+}
 
 // ─── Mock nearby events ────────────────────────────────────────────────────
 
@@ -39,9 +127,9 @@ interface HazardEvent {
 }
 
 const MOCK_HAZARDS: HazardEvent[] = [
-  { id: "1", type: "ACCIDENT",     label: "Accident Ahead", distance: "0.8 mi", icon: "warning",      offset: { lat: 0.008,  lng: 0.002  } },
-  { id: "2", type: "SPEED_TRAP",   label: "Mobile Trap",    distance: "2.4 mi", icon: "camera",       offset: { lat: 0.018,  lng: -0.005 } },
-  { id: "3", type: "ROAD_CLOSURE", label: "Lane Closure",   distance: "4.1 mi", icon: "alert-circle", offset: { lat: -0.01,  lng: 0.01   } },
+  { id: "1", type: "ACCIDENT",     label: "Accident Ahead", distance: "0.8 km", icon: "warning",      offset: { lat: 0.008,  lng: 0.002  } },
+  { id: "2", type: "SPEED_TRAP",   label: "Mobile Trap",    distance: "2.4 km", icon: "camera",       offset: { lat: 0.018,  lng: -0.005 } },
+  { id: "3", type: "ROAD_CLOSURE", label: "Lane Closure",   distance: "4.1 km", icon: "alert-circle", offset: { lat: -0.01,  lng: 0.01   } },
 ];
 
 const HAZARD_COLORS: Record<HazardEvent["type"], string> = {
@@ -55,25 +143,84 @@ const HAZARD_COLORS: Record<HazardEvent["type"], string> = {
 
 export default function MapScreen() {
   const cameraRef = useRef<CameraRef>(null);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── MiniCam PiP ────────────────────────────────────────────────────────────
+  const [camActive, setCamActive] = useState(false);
+  useFocusEffect(
+    useCallback(() => {
+      setCamActive(true);
+      return () => setCamActive(false);
+    }, [])
+  );
+
+  const { width: screenW } = Dimensions.get("window");
+  const MINICAM_W = Math.round(130 * (16 / 9));
+  const MINICAM_H = 130;
+  const miniCamPos = useRef(
+    new Animated.ValueXY({ x: screenW - MINICAM_W - 16, y: 140 })
+  ).current;
+  const miniCamPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        miniCamPos.setOffset({
+          x: (miniCamPos.x as any)._value,
+          y: (miniCamPos.y as any)._value,
+        });
+        miniCamPos.setValue({ x: 0, y: 0 });
+      },
+      onPanResponderMove: Animated.event(
+        [null, { dx: miniCamPos.x, dy: miniCamPos.y }],
+        { useNativeDriver: false }
+      ),
+      onPanResponderRelease: () => {
+        miniCamPos.flattenOffset();
+      },
+    })
+  ).current;
+
   const [showEvents, setShowEvents] = useState(true);
   const [searchText, setSearchText] = useState("");
+  const [suggestions, setSuggestions] = useState<GeocodingFeature[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+
+  // Navigation state
+  const [destination, setDestination] = useState<{ name: string; lng: number; lat: number } | null>(null);
+  const [route, setRoute] = useState<GeoJSON.Feature<GeoJSON.LineString> | null>(null);
+  const [steps, setSteps] = useState<RouteStep[]>([]);
+  const [currentStepIdx, setCurrentStepIdx] = useState(0);
+  const [routeInfo, setRouteInfo] = useState<{ distance: string; duration: string } | null>(null);
+  const [isFetchingRoute, setIsFetchingRoute] = useState(false);
 
   const { location } = useGPS({ enabled: true });
   const sessions = useQuery(api.queries.getSessionHistory, { limit: 1 });
 
   const trail = sessions?.[0]?.gpsLog ?? [];
   const trailCoords = trail.map((p) => [p.lng, p.lat]);
-
   const trailGeoJSON: GeoJSON.Feature<GeoJSON.LineString> = {
     type: "Feature",
     geometry: { type: "LineString", coordinates: trailCoords },
     properties: {},
   };
 
-  const speedMph = location ? (location.speed * 2.237).toFixed(0) : "0";
+  const speedKph = location ? (location.speed * 3.6).toFixed(0) : "0";
   const lat = location ? location.lat.toFixed(5) : "0.00000";
   const lng = location ? location.lng.toFixed(5) : "0.00000";
-  const bearing = "284° WNW";
+
+  // Advance route step when user passes within 30 m of step end
+  useEffect(() => {
+    if (!location || steps.length === 0 || currentStepIdx >= steps.length) return;
+    const step = steps[currentStepIdx];
+    const dist = haversineMeters(
+      [location.lng, location.lat],
+      step.endLocation
+    );
+    if (dist < 30 && currentStepIdx < steps.length - 1) {
+      setCurrentStepIdx((i) => i + 1);
+    }
+  }, [location, steps, currentStepIdx]);
 
   const centerOnUser = () => {
     if (location) {
@@ -85,9 +232,121 @@ export default function MapScreen() {
     }
   };
 
+  // ── Search ──────────────────────────────────────────────────────────────
+
+  const fetchSuggestions = useCallback(
+    async (query: string) => {
+      if (!MAPTILER_KEY || query.length < 3) {
+        setSuggestions([]);
+        return;
+      }
+      setIsSearching(true);
+      try {
+        const prox = location ? `&proximity=${location.lng},${location.lat}` : "";
+        const url = `https://api.maptiler.com/geocoding/${encodeURIComponent(query)}.json?key=${MAPTILER_KEY}${prox}&limit=5`;
+        const res = await fetch(url);
+        const data = await res.json();
+        setSuggestions(data.features ?? []);
+      } catch {
+        setSuggestions([]);
+      } finally {
+        setIsSearching(false);
+      }
+    },
+    [location]
+  );
+
+  const onSearchChange = (text: string) => {
+    setSearchText(text);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    if (text.length < 3) { setSuggestions([]); return; }
+    searchTimeoutRef.current = setTimeout(() => fetchSuggestions(text), 400);
+  };
+
+  // ── Route fetch ──────────────────────────────────────────────────────────
+
+  const selectDestination = useCallback(
+    async (feature: GeocodingFeature) => {
+      Keyboard.dismiss();
+      setSuggestions([]);
+      setIsSearchFocused(false);
+      const [destLng, destLat] = feature.center;
+      const destName = feature.place_name;
+      setDestination({ name: destName, lng: destLng, lat: destLat });
+      setSearchText(destName.split(",")[0]);
+
+      if (!location) return;
+      setIsFetchingRoute(true);
+      try {
+        const url =
+          `https://router.project-osrm.org/route/v1/driving/` +
+          `${location.lng},${location.lat};${destLng},${destLat}` +
+          `?overview=full&geometries=geojson&steps=true`;
+        const res = await fetch(url);
+        const data = await res.json();
+        const r = data.routes?.[0];
+        if (!r) return;
+
+        setRoute({ type: "Feature", geometry: r.geometry, properties: {} });
+        setRouteInfo({
+          distance: formatDist(r.distance),
+          duration: formatDuration(r.duration),
+        });
+
+        const parsedSteps: RouteStep[] = (r.legs?.[0]?.steps ?? []).map(
+          (s: any) => ({
+            instruction: buildInstruction(
+              s.maneuver.type,
+              s.maneuver.modifier ?? "",
+              s.name ?? ""
+            ),
+            distanceText: formatDist(s.distance),
+            iconName: stepIcon(s.maneuver.type, s.maneuver.modifier ?? ""),
+            endLocation: s.maneuver.location as [number, number],
+          })
+        );
+        setSteps(parsedSteps);
+        setCurrentStepIdx(0);
+
+        // Fit map to route bounds
+        const coords = r.geometry.coordinates as [number, number][];
+        const lngs = coords.map((c) => c[0]);
+        const lats = coords.map((c) => c[1]);
+        cameraRef.current?.fitBounds(
+          [Math.max(...lngs), Math.max(...lats)],
+          [Math.min(...lngs), Math.min(...lats)],
+          60,
+          800
+        );
+      } catch (e) {
+        console.warn("Route fetch failed", e);
+      } finally {
+        setIsFetchingRoute(false);
+      }
+    },
+    [location]
+  );
+
+  const clearNavigation = () => {
+    setDestination(null);
+    setRoute(null);
+    setSteps([]);
+    setCurrentStepIdx(0);
+    setRouteInfo(null);
+    setSearchText("");
+    setSuggestions([]);
+    setIsSearchFocused(false);
+  };
+
+  // ── Derived ──────────────────────────────────────────────────────────────
+
+  const isNavigating = !!destination && !!route;
+  const currentStep = steps[currentStepIdx] ?? null;
+  const showSuggestions = isSearchFocused && suggestions.length > 0;
+
   return (
     <View style={styles.container}>
-      {/* Full-screen map */}
+      {/* ── Full-screen map ─────────────────────────────────────────── */}
       <MapView
         style={StyleSheet.absoluteFillObject}
         mapStyle={STYLE_URL}
@@ -98,7 +357,7 @@ export default function MapScreen() {
         <Camera
           ref={cameraRef}
           centerCoordinate={
-            location ? [location.lng, location.lat] : [-122.4194, 37.7749]
+            location ? [location.lng, location.lat] : [-8.6, 41.15]
           }
           zoomLevel={13}
         />
@@ -112,15 +371,54 @@ export default function MapScreen() {
               id="trailLine"
               style={{
                 lineColor: Colors.tertiaryContainer,
-                lineWidth: 2.5,
+                lineWidth: 2,
                 lineDasharray: [2, 1],
+                lineOpacity: 0.5,
               }}
             />
           </ShapeSource>
         )}
 
+        {/* Route — glow + solid layers */}
+        {route && (
+          <ShapeSource id="route" shape={route}>
+            <LineLayer
+              id="routeGlow"
+              style={{
+                lineColor: Colors.tertiaryContainer,
+                lineWidth: 14,
+                lineOpacity: 0.12,
+                lineCap: "round",
+                lineJoin: "round",
+              }}
+            />
+            <LineLayer
+              id="routeLine"
+              style={{
+                lineColor: Colors.tertiaryContainer,
+                lineWidth: 4,
+                lineOpacity: 0.9,
+                lineCap: "round",
+                lineJoin: "round",
+              }}
+            />
+          </ShapeSource>
+        )}
+
+        {/* Destination marker */}
+        {destination && (
+          <PointAnnotation
+            id="destination"
+            coordinate={[destination.lng, destination.lat]}
+          >
+            <View style={styles.destPin}>
+              <Ionicons name="location" size={14} color={Colors.inversePrimary} />
+            </View>
+          </PointAnnotation>
+        )}
+
         {/* Hazard markers */}
-        {showEvents && location &&
+        {showEvents && !isNavigating && location &&
           MOCK_HAZARDS.map((h) => (
             <PointAnnotation
               key={h.id}
@@ -137,40 +435,113 @@ export default function MapScreen() {
           ))}
       </MapView>
 
-      {/* Search bar — top */}
+      {/* ── Search bar ──────────────────────────────────────────────── */}
       <SafeAreaView style={styles.searchBar} edges={["top"]}>
         <View style={styles.searchInner}>
-          <Ionicons name="search-outline" size={16} color={Colors.outline} />
+          {isNavigating ? (
+            <Ionicons name="navigate" size={16} color={Colors.tertiaryContainer} />
+          ) : (
+            <Ionicons name="search-outline" size={16} color={Colors.outline} />
+          )}
           <TextInput
             style={styles.searchInput}
             value={searchText}
-            onChangeText={setSearchText}
+            onChangeText={onSearchChange}
+            onFocus={() => setIsSearchFocused(true)}
+            onBlur={() => setTimeout(() => setIsSearchFocused(false), 150)}
             placeholder="Search destination…"
             placeholderTextColor={Colors.outline}
+            returnKeyType="search"
+            onSubmitEditing={() => fetchSuggestions(searchText)}
           />
-          <TouchableOpacity>
-            <Ionicons name="mic-outline" size={16} color={Colors.tertiaryContainer} />
-          </TouchableOpacity>
+          {isSearching && (
+            <ActivityIndicator size="small" color={Colors.tertiaryContainer} />
+          )}
+          {isNavigating && !isSearching && (
+            <TouchableOpacity onPress={clearNavigation} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="close-circle" size={18} color={Colors.outline} />
+            </TouchableOpacity>
+          )}
+          {!isNavigating && !isSearching && searchText.length > 0 && (
+            <TouchableOpacity onPress={() => { setSearchText(""); setSuggestions([]); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="close-circle" size={18} color={Colors.outline} />
+            </TouchableOpacity>
+          )}
         </View>
+
+        {/* Suggestions dropdown */}
+        {showSuggestions && (
+          <View style={styles.suggestionsCard}>
+            <FlatList
+              data={suggestions}
+              keyExtractor={(item) => item.id}
+              keyboardShouldPersistTaps="handled"
+              ItemSeparatorComponent={() => <View style={styles.suggestionDivider} />}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.suggestionRow}
+                  onPress={() => selectDestination(item)}
+                >
+                  <Ionicons name="location-outline" size={14} color={Colors.outline} />
+                  <View style={styles.suggestionTextWrap}>
+                    <Text style={styles.suggestionPrimary} numberOfLines={1}>
+                      {item.place_name.split(",")[0]}
+                    </Text>
+                    <Text style={styles.suggestionSecondary} numberOfLines={1}>
+                      {item.place_name.split(",").slice(1).join(",").trim()}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        )}
       </SafeAreaView>
 
-      {/* Bearing card — top left */}
-      <View style={styles.bearingCard}>
-        <Text style={styles.bearingValue}>{bearing}</Text>
-        <Text style={styles.bearingLabel}>HEADING</Text>
-        <View style={styles.coordsMini}>
-          <Text style={styles.coordsMiniText}>{lat}° N</Text>
-          <Text style={styles.coordsMiniText}>{lng}° W</Text>
+      {/* ── Turn instruction banner (navigating) ─────────────────────── */}
+      {isNavigating && currentStep && (
+        <View style={styles.instructionBanner}>
+          <View style={styles.instructionIconWrap}>
+            {isFetchingRoute ? (
+              <ActivityIndicator size="small" color={Colors.tertiaryContainer} />
+            ) : (
+              <Ionicons name={currentStep.iconName} size={22} color={Colors.tertiaryContainer} />
+            )}
+          </View>
+          <View style={styles.instructionTextWrap}>
+            <Text style={styles.instructionText} numberOfLines={2}>
+              {currentStep.instruction}
+            </Text>
+            <Text style={styles.instructionDist}>{currentStep.distanceText}</Text>
+          </View>
+          {routeInfo && (
+            <View style={styles.etaBadge}>
+              <Text style={styles.etaDuration}>{routeInfo.duration}</Text>
+              <Text style={styles.etaDistance}>{routeInfo.distance}</Text>
+            </View>
+          )}
         </View>
-      </View>
+      )}
 
-      {/* Speed — bottom left */}
+      {/* ── Bearing / coords card (not navigating) ───────────────────── */}
+      {!isNavigating && (
+        <View style={styles.bearingCard}>
+          <Text style={styles.bearingValue}>GPS</Text>
+          <Text style={styles.bearingLabel}>POSITION</Text>
+          <View style={styles.coordsMini}>
+            <Text style={styles.coordsMiniText}>{lat}° N</Text>
+            <Text style={styles.coordsMiniText}>{lng}° W</Text>
+          </View>
+        </View>
+      )}
+
+      {/* ── Speed card ───────────────────────────────────────────────── */}
       <View style={styles.speedCard}>
-        <Text style={styles.speedValue}>{speedMph}</Text>
-        <Text style={styles.speedUnit}>MPH</Text>
+        <Text style={styles.speedValue}>{speedKph}</Text>
+        <Text style={styles.speedUnit}>KM/H</Text>
       </View>
 
-      {/* Map controls — bottom right */}
+      {/* ── Map controls (right panel) ───────────────────────────────── */}
       <View style={styles.rightPanel}>
         <TouchableOpacity style={styles.mapBtn} onPress={centerOnUser}>
           <Ionicons name="locate-outline" size={18} color={Colors.tertiaryContainer} />
@@ -181,20 +552,30 @@ export default function MapScreen() {
         <TouchableOpacity style={styles.mapBtn}>
           <Ionicons name="remove-outline" size={18} color={Colors.onSurface} />
         </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.mapBtn, showEvents && styles.mapBtnActive]}
-          onPress={() => setShowEvents((v) => !v)}
-        >
-          <Ionicons
-            name="alert-circle-outline"
-            size={18}
-            color={showEvents ? Colors.tertiaryContainer : Colors.outline}
-          />
-        </TouchableOpacity>
+        {!isNavigating && (
+          <TouchableOpacity
+            style={[styles.mapBtn, showEvents && styles.mapBtnActive]}
+            onPress={() => setShowEvents((v) => !v)}
+          >
+            <Ionicons
+              name="alert-circle-outline"
+              size={18}
+              color={showEvents ? Colors.tertiaryContainer : Colors.outline}
+            />
+          </TouchableOpacity>
+        )}
       </View>
 
-      {/* Nearby events card */}
-      {showEvents && location && (
+      {/* ── MiniCam PiP ─────────────────────────────────────────────── */}
+      <Animated.View
+        style={[styles.miniCamFloat, { left: miniCamPos.x, top: miniCamPos.y }]}
+        {...miniCamPanResponder.panHandlers}
+      >
+        <MiniCam size={MINICAM_H} active={camActive} />
+      </Animated.View>
+
+      {/* ── Nearby events card (not navigating) ─────────────────────── */}
+      {showEvents && !isNavigating && location && (
         <View style={styles.eventsCard}>
           <Text style={styles.eventsTitle}>NEARBY EVENTS</Text>
           {MOCK_HAZARDS.slice(0, 2).map((h) => (
@@ -214,7 +595,24 @@ export default function MapScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  searchBar: { position: "absolute", top: 0, left: 0, right: 0, paddingHorizontal: 16 },
+  miniCamFloat: {
+    position: "absolute",
+    zIndex: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+
+  // ── Search
+  searchBar: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 16,
+  },
   searchInner: {
     flexDirection: "row",
     alignItems: "center",
@@ -235,6 +633,108 @@ const styles = StyleSheet.create({
     fontFamily: Typography.bodyMedium,
     fontSize: 14,
   },
+
+  // ── Suggestions
+  suggestionsCard: {
+    backgroundColor: Colors.surfaceContainerHigh,
+    borderRadius: Radius.lg,
+    marginTop: 6,
+    maxHeight: 240,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  suggestionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    gap: 10,
+  },
+  suggestionDivider: {
+    height: 1,
+    backgroundColor: Colors.outlineVariant,
+    marginHorizontal: 16,
+  },
+  suggestionTextWrap: { flex: 1 },
+  suggestionPrimary: {
+    color: Colors.onSurface,
+    fontFamily: Typography.bodyMedium,
+    fontSize: 13,
+  },
+  suggestionSecondary: {
+    color: Colors.outline,
+    fontFamily: Typography.body,
+    fontSize: 11,
+    marginTop: 1,
+  },
+
+  // ── Turn instruction banner
+  instructionBanner: {
+    position: "absolute",
+    top: 90,
+    left: 16,
+    right: 16,
+    backgroundColor: Colors.surfaceContainerHigh,
+    borderRadius: Radius.lg,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: Colors.outlineVariant,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  instructionIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.electricCyanDim,
+    borderWidth: 1,
+    borderColor: Colors.tertiaryContainer,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  instructionTextWrap: { flex: 1 },
+  instructionText: {
+    color: Colors.onSurface,
+    fontFamily: Typography.headlineMedium,
+    fontSize: 14,
+    lineHeight: 18,
+  },
+  instructionDist: {
+    color: Colors.tertiaryContainer,
+    fontFamily: Typography.headline,
+    fontSize: 11,
+    letterSpacing: 0.5,
+    marginTop: 3,
+  },
+  etaBadge: {
+    alignItems: "flex-end",
+    gap: 1,
+  },
+  etaDuration: {
+    color: Colors.onSurface,
+    fontFamily: Typography.headline,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  etaDistance: {
+    color: Colors.outline,
+    fontFamily: Typography.headlineMedium,
+    fontSize: 10,
+    letterSpacing: 0.5,
+  },
+
+  // ── Bearing card
   bearingCard: {
     position: "absolute",
     top: 90,
@@ -268,6 +768,8 @@ const styles = StyleSheet.create({
     fontSize: 9,
     letterSpacing: 0.5,
   },
+
+  // ── Speed card
   speedCard: {
     position: "absolute",
     bottom: 100,
@@ -299,6 +801,8 @@ const styles = StyleSheet.create({
     fontSize: 10,
     letterSpacing: 2,
   },
+
+  // ── Map controls
   rightPanel: { position: "absolute", right: 16, bottom: 100, gap: 8 },
   mapBtn: {
     width: 44,
@@ -319,6 +823,20 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.electricCyanDim,
     borderColor: Colors.tertiaryContainer,
   },
+
+  // ── Destination pin
+  destPin: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(191,0,43,0.2)",
+    borderWidth: 2,
+    borderColor: Colors.inversePrimary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  // ── Hazard markers
   hazardMarker: {
     width: 28,
     height: 28,
@@ -328,6 +846,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+
+  // ── Events card
   eventsCard: {
     position: "absolute",
     bottom: 100,

@@ -1,7 +1,9 @@
 {
+  "$schema": "https://json.schemastore.org/tsconfig",
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
+    "moduleResolution": "bundler",
     "paths": {
       "@/*": [
         "./*"
@@ -13,6 +15,6 @@
     "**/*.tsx",
     ".expo/types/**/*.d.ts",
     "expo-env.d.ts",
-    ".expo/types/**/*.ts"
+    "types/**/*.d.ts"
   ]
 }

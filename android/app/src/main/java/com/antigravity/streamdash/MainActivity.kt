@@ -1,4 +1,4 @@
-package com.antigravity.streamcam
+package com.antigravity.streamdash
 import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build

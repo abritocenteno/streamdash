@@ -1,4 +1,4 @@
-package com.antigravity.streamcam
+package com.antigravity.streamdash
 
 import android.app.Application
 import android.content.res.Configuration

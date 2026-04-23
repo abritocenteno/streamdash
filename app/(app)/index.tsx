@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Animated,
@@ -11,11 +11,18 @@ import {
   View,
   ActivityIndicator,
 } from "react-native";
-import { CameraView } from "expo-camera";
+import {
+  Camera,
+  useCameraDevice,
+  useCameraFormat,
+  useSkiaFrameProcessor,
+} from "react-native-vision-camera";
+import { Skia, useFont } from "@shopify/react-native-skia";
+import { useSharedValue } from "react-native-reanimated";
 import * as MediaLibrary from "expo-media-library";
 import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
@@ -23,12 +30,19 @@ import { StreamView, StreamViewRef, StreamStatus } from "@/components/StreamView
 import { HUDOverlay } from "@/components/HUDOverlay";
 import { MiniMap } from "@/components/MiniMap";
 import { useGPS, GPSPoint } from "@/hooks/useGPS";
-import { useStreamTimer } from "@/hooks/useStreamTimer";
 import { useMediaPermissions } from "@/hooks/useMediaPermissions";
+import { useStreamTimer } from "@/hooks/useStreamTimer";
 import { useOrientation } from "@/hooks/useOrientation";
 import { Colors, Typography, Radius, StreamPlatforms, StreamPlatform } from "@/constants/theme";
 import { FontAwesome5 } from "@expo/vector-icons";
 import { LandscapeHUD } from "@/components/LandscapeHUD";
+import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
+import { useCameraState } from "@/contexts/CameraContext";
+
+// Fonts for Skia frame processor HUD
+// Sizes chosen for readability at 1080p–4K recording resolutions
+const BOLD_TTF = require("../../assets/fonts/SpaceGrotesk_700Bold.ttf");
+const MEDIUM_TTF = require("../../assets/fonts/SpaceGrotesk_500Medium.ttf");
 
 type CameraMode = "record" | "live";
 
@@ -81,26 +95,60 @@ export default function DashcamScreen() {
   return <DashcamView />;
 }
 
+// ─── Camera view ────────────────────────────────────────────────────────────
+
 function DashcamView() {
   const router = useRouter();
   const orientation = useOrientation();
 
   const [mode, setMode] = useState<CameraMode>("record");
-  // Controls which component has exclusive camera access
-  const [activeCamera, setActiveCamera] = useState<"expo" | "stream">("expo");
+  // "vision" = VisionCamera preview/recording; "stream" = NodePublisher RTMP
+  const [activeCamera, setActiveCamera] = useState<"vision" | "stream">("vision");
   const [isRecording, setIsRecording] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
   const [streamStatus, setStreamStatus] = useState<StreamStatus>("idle");
   const [sessionId, setSessionId] = useState<Id<"sessions"> | null>(null);
   const [gpsTrail, setGpsTrail] = useState<GPSPoint[]>([]);
   const [pendingStreamKey, setPendingStreamKey] = useState<string | null>(null);
 
-  const cameraRef = useRef<CameraView>(null);
+  // Track screen focus so VisionCamera pauses when switching tabs (safe to do
+  // since setting isActive=false while recording keeps the recording going)
+  const [isFocused, setIsFocused] = useState(true);
+  const isRecordingRef = useRef(false);
+  useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
+
+  useFocusEffect(
+    useCallback(() => {
+      setIsFocused(true);
+      return () => {
+        // Keep camera active if a recording is in progress
+        if (!isRecordingRef.current) setIsFocused(false);
+      };
+    }, [])
+  );
+
+  const cameraRef = useRef<Camera>(null);
   const streamRef = useRef<StreamViewRef>(null);
 
-  // Draggable MiniMap — starts top-right, below the voice button
+  // ── Camera device + 4K format ─────────────────────────────────────────────
+
+  const settings = useQuery(api.queries.getUserSettings);
+  const facing = (settings?.cameraFacing as "front" | "back") ?? "back";
+  const device = useCameraDevice(facing);
+
+  // Prefer 4K @ 30fps; VisionCamera falls back to nearest supported format
+  const format = useCameraFormat(device, [
+    { videoResolution: { width: 3840, height: 2160 } },
+    { fps: 30 },
+  ]);
+
+  // ── Draggable MiniMap PiP ─────────────────────────────────────────────────
+
   const { width: screenW } = Dimensions.get("window");
   const MINIMAP_SIZE = 130;
-  const miniMapPos = useRef(new Animated.ValueXY({ x: screenW - MINIMAP_SIZE - 16, y: 64 })).current;
+  const miniMapPos = useRef(
+    new Animated.ValueXY({ x: screenW - MINIMAP_SIZE - 16, y: 140 })
+  ).current;
   const miniMapPanResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -126,17 +174,106 @@ function DashcamView() {
   const isStreaming = isLive || isConnecting;
 
   const { formatted: duration } = useStreamTimer(isLive);
-
-  const settings = useQuery(api.queries.getUserSettings);
   const startSession = useMutation(api.sessions.startSession);
   const endSession = useMutation(api.sessions.endSession);
   const updateGPS = useMutation(api.sessions.updateGPS);
+
+  // ── Skia frame processor HUD ──────────────────────────────────────────────
+  // Shared values bridge React state → worklet thread
+
+  const hudSpeed    = useSharedValue("0");
+  const hudLat      = useSharedValue("0.00000");
+  const hudLng      = useSharedValue("0.00000");
+  const hudIsLive   = useSharedValue(false);
+  const hudIsRec    = useSharedValue(false);
+  const hudDuration = useSharedValue("00:00:00");
+
+  useEffect(() => { hudIsLive.value = isLive; },      [isLive]);
+  useEffect(() => { hudIsRec.value  = isRecording; }, [isRecording]);
+  useEffect(() => { hudDuration.value = duration; },  [duration]);
+
+  // Fonts loaded once on mount; null until ready (handled in worklet guard)
+  const fontLg = useFont(BOLD_TTF, 72);   // speed number
+  const fontMd = useFont(BOLD_TTF, 28);   // LIVE/REC label, KM/H
+  const fontSm = useFont(MEDIUM_TTF, 22); // coordinates
+
+  const frameProcessor = useSkiaFrameProcessor(
+    (frame) => {
+      "worklet";
+      frame.render(); // draw camera frame first
+
+      // Only burn HUD when actively recording or streaming
+      if (!hudIsRec.value && !hudIsLive.value) return;
+      if (!fontLg || !fontMd || !fontSm) return;
+
+      const W = frame.width;
+      const H = frame.height;
+      const P = Math.round(H * 0.022); // ~48px at 4K, ~24px at 1080p
+
+      // ── Paints ──────────────────────────────────────────────────
+      const cyanPaint = Skia.Paint();
+      cyanPaint.setColor(Skia.Color("#00E5FF"));
+      cyanPaint.setAntiAlias(true);
+
+      const whitePaint = Skia.Paint();
+      whitePaint.setColor(Skia.Color("#E2E2E8"));
+      whitePaint.setAntiAlias(true);
+
+      const mutedPaint = Skia.Paint();
+      mutedPaint.setColor(Skia.Color("#849396"));
+      mutedPaint.setAntiAlias(true);
+
+      // ── LIVE / REC badge (top-left) ──────────────────────────────
+      const badgeH = 36;
+      const badgeW = 90;
+      const bgPaint = Skia.Paint();
+      bgPaint.setColor(Skia.Color("rgba(191,0,43,0.75)"));
+      frame.drawRect(Skia.XYWHRect(P, P, badgeW, badgeH), bgPaint);
+
+      // Red dot
+      const dotPaint = Skia.Paint();
+      dotPaint.setColor(Skia.Color("#FF4444"));
+      dotPaint.setAntiAlias(true);
+      frame.drawCircle(P + 16, P + badgeH / 2, 6, dotPaint);
+
+      // Label text
+      const label = hudIsLive.value ? "LIVE" : "REC";
+      frame.drawText(label, P + 28, P + 25, whitePaint, fontMd);
+
+      // Timer (right of badge, when live)
+      if (hudIsLive.value) {
+        frame.drawText(hudDuration.value, P + badgeW + 12, P + 25, cyanPaint, fontMd);
+      }
+
+      // ── Speed (bottom-left) ──────────────────────────────────────
+      // fontLg baseline sits ~72px below y; place at H - P - label height
+      const speedY = H - P - 28;
+      frame.drawText(hudSpeed.value, P, speedY, cyanPaint, fontLg);
+      frame.drawText("KM/H", P + 4, H - P, mutedPaint, fontMd);
+
+      // ── Coords (bottom-right) ────────────────────────────────────
+      const coordX = W - 250 - P;
+      const coordY1 = H - P - 28;
+      const coordY2 = H - P;
+      frame.drawText("LAT", coordX, coordY1, cyanPaint, fontSm);
+      frame.drawText(hudLat.value, coordX + 48, coordY1, whitePaint, fontSm);
+      frame.drawText("LNG", coordX, coordY2, cyanPaint, fontSm);
+      frame.drawText(hudLng.value, coordX + 48, coordY2, whitePaint, fontSm);
+    },
+    [fontLg, fontMd, fontSm, hudIsRec, hudIsLive, hudSpeed, hudLat, hudLng, hudDuration]
+  );
+
+  // ── GPS ───────────────────────────────────────────────────────────────────
 
   const { location } = useGPS({
     enabled: true,
     onUpdate: useCallback(
       async (point: GPSPoint) => {
         setGpsTrail((prev) => [...prev, point].slice(-20));
+        // Keep HUD shared values in sync with live GPS
+        hudSpeed.value = (point.speed * 3.6).toFixed(0);
+        hudLat.value   = point.lat.toFixed(5);
+        hudLng.value   = point.lng.toFixed(5);
         if (sessionId) {
           await updateGPS({
             sessionId,
@@ -151,6 +288,20 @@ function DashcamView() {
     ),
   });
 
+  // ── Keep screen awake + signal MiniCam to yield the camera ───────────────
+
+  const { setIsCapturing } = useCameraState();
+
+  useEffect(() => {
+    const capturing = isRecording || isStreaming;
+    setIsCapturing(capturing);
+    if (capturing) {
+      activateKeepAwakeAsync("dashcam");
+    } else {
+      deactivateKeepAwake("dashcam");
+    }
+  }, [isRecording, isStreaming, setIsCapturing]);
+
   // ── Record handlers ───────────────────────────────────────────────────────
 
   const handleStartRecord = useCallback(async () => {
@@ -159,28 +310,33 @@ function DashcamView() {
       Alert.alert("Permission needed", "Allow media library access to save recordings.");
       return;
     }
-    try {
-      setIsRecording(true);
-      const result = await cameraRef.current?.recordAsync({ maxDuration: 3600 });
-      if (result?.uri) {
-        const asset = await MediaLibrary.createAssetAsync(result.uri);
-        const album = await MediaLibrary.getAlbumAsync("StreamCam");
-        if (album) {
-          await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
-        } else {
-          await MediaLibrary.createAlbumAsync("StreamCam", asset, false);
+    setIsRecording(true);
+    cameraRef.current?.startRecording({
+      videoCodec: "h265",
+      onRecordingFinished: async (video) => {
+        setIsRecording(false);
+        try {
+          const asset = await MediaLibrary.createAssetAsync(video.path);
+          const album = await MediaLibrary.getAlbumAsync("StreamCam");
+          if (album) {
+            await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
+          } else {
+            await MediaLibrary.createAlbumAsync("StreamCam", asset, false);
+          }
+        } catch (err) {
+          console.error("[DashcamScreen] save error", err);
         }
-      }
-    } catch (err) {
-      console.error("[DashcamScreen] record error", err);
-    } finally {
-      setIsRecording(false);
-    }
+      },
+      onRecordingError: (error) => {
+        console.error("[DashcamScreen] record error", error);
+        setIsRecording(false);
+      },
+    });
   }, []);
 
-  const handleStopRecord = useCallback(() => {
-    cameraRef.current?.stopRecording();
-    setIsRecording(false);
+  // stopRecording() returns a Promise; onRecordingFinished fires after it resolves
+  const handleStopRecord = useCallback(async () => {
+    await cameraRef.current?.stopRecording();
   }, []);
 
   // ── Stream handlers ───────────────────────────────────────────────────────
@@ -219,10 +375,11 @@ function DashcamView() {
     }
     setStreamStatus("idle");
     setPendingStreamKey(null);
-    setActiveCamera("expo"); // hand camera back to CameraView
+    setActiveCamera("vision"); // hand camera back to VisionCamera
   }, [sessionId, endSession]);
 
   // ── Landscape: Driving Mode HUD ───────────────────────────────────────────
+
   if (orientation === "landscape") {
     return (
       <LandscapeHUD
@@ -240,19 +397,25 @@ function DashcamView() {
     );
   }
 
-  const facing = (settings?.cameraFacing as "front" | "back") ?? "back";
+  // ── Portrait ──────────────────────────────────────────────────────────────
 
-  // ── Portrait ─────────────────────────────────────────────────────────────
+  // Camera is active when this screen is focused, or when recording (to keep
+  // the recording alive even if the user briefly switches tabs)
+  const cameraIsActive = activeCamera === "vision" && (isFocused || isRecording || isStreaming);
+
   return (
     <View style={styles.container}>
-      {/* expo-camera preview — visible when not streaming */}
-      {activeCamera === "expo" && (
-        <CameraView
+      {/* VisionCamera — preview + frame processor HUD burned into recordings */}
+      {activeCamera === "vision" && device && (
+        <Camera
           ref={cameraRef}
+          device={device}
+          format={format}
+          isActive={cameraIsActive}
+          video={true}
+          audio={!isMuted}
+          frameProcessor={frameProcessor}
           style={StyleSheet.absoluteFill}
-          facing={facing}
-          mode="video"
-          videoQuality="2160p"
         />
       )}
 
@@ -267,7 +430,17 @@ function DashcamView() {
         />
       )}
 
-      <HUDOverlay isLive={isLive} duration={duration} location={location} />
+      {/* Status bar gradient — keeps time/battery readable over camera */}
+      <LinearGradient
+        colors={["rgba(0,0,0,0.55)", "transparent"]}
+        style={styles.statusBarScrim}
+      />
+
+      {/* React HUD — shown during idle preview; frame processor takes over
+          during recording/streaming so the HUD is burned into the video */}
+      {!isRecording && !isStreaming && (
+        <HUDOverlay isLive={isLive} duration={duration} location={location} />
+      )}
 
       {/* Draggable MiniMap PiP */}
       <Animated.View
@@ -277,14 +450,19 @@ function DashcamView() {
         <MiniMap current={location} trail={gpsTrail} size={MINIMAP_SIZE} />
       </Animated.View>
 
-      {/* Voice command shortcut */}
+      {/* Mic mute toggle */}
       <SafeAreaView style={styles.topControls} edges={["top"]}>
         <TouchableOpacity
-          style={styles.voiceBtn}
-          onPress={() => router.push("/(app)/voice")}
+          style={[styles.voiceBtn, isMuted && styles.voiceBtnMuted]}
+          onPress={() => setIsMuted((m) => !m)}
           activeOpacity={0.8}
         >
-          <FontAwesome5 name="microphone" size={16} color={Colors.tertiaryContainer} solid />
+          <FontAwesome5
+            name={isMuted ? "microphone-slash" : "microphone"}
+            size={16}
+            color={isMuted ? Colors.error : Colors.tertiaryContainer}
+            solid
+          />
         </TouchableOpacity>
       </SafeAreaView>
 
@@ -328,7 +506,6 @@ function DashcamView() {
 
         {/* Action button */}
         {mode === "record" ? (
-          // ── Record mode buttons ──────────────────────────────────────────
           isRecording ? (
             <TouchableOpacity style={styles.recStopBtn} onPress={handleStopRecord} activeOpacity={0.85}>
               <View style={styles.stopSquare} />
@@ -341,7 +518,6 @@ function DashcamView() {
             </TouchableOpacity>
           )
         ) : (
-          // ── Live mode buttons ────────────────────────────────────────────
           isConnecting ? (
             <View style={[styles.streamButton, styles.streamButtonConnecting]}>
               <ActivityIndicator color={Colors.onSurface} size="small" style={{ marginRight: 4 }} />
@@ -401,6 +577,14 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#000",
+  },
+  statusBarScrim: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 90,
+    zIndex: 5,
   },
   miniMapFloat: {
     position: "absolute",
@@ -465,6 +649,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginTop: 8,
+  },
+  voiceBtnMuted: {
+    backgroundColor: Colors.recordRedDim,
+    borderColor: Colors.error,
   },
   // ── Bottom controls
   controlsWrapper: {

@@ -86,9 +86,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.antigravity.streamcam'
+    namespace 'com.antigravity.streamdash'
     defaultConfig {
-        applicationId 'com.antigravity.streamcam'
+        applicationId 'com.antigravity.streamdash'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

@@ -17,7 +17,7 @@ export function useGoogleOAuth() {
     setError(null);
     try {
       const { createdSessionId, setActive } = await startOAuthFlow({
-        redirectUrl: Linking.createURL("/(app)", { scheme: "streamcam" }),
+        redirectUrl: Linking.createURL("/(app)", { scheme: "streamdash" }),
       });
       if (createdSessionId && setActive) {
         await setActive({ session: createdSessionId });

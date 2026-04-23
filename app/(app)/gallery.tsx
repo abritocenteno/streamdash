@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import {
-  FlatList,
   Image,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,6 +15,7 @@ import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Doc } from "@/convex/_generated/dataModel";
 import * as MediaLibrary from "expo-media-library";
+import { useVideoPlayer, VideoView } from "expo-video";
 import { Colors, Typography, Radius } from "@/constants/theme";
 import { FontAwesome5 } from "@expo/vector-icons";
 
@@ -72,7 +73,7 @@ type Filter = "ALL" | "TODAY" | "EVENTS";
 
 // ─── Local clip card ───────────────────────────────────────────────────────
 
-function LocalClipCard({ asset }: { asset: MediaLibrary.Asset }) {
+function LocalClipCard({ asset, onPlay }: { asset: MediaLibrary.Asset; onPlay: () => void }) {
   return (
     <View style={styles.clipCard}>
       <View style={styles.thumbBg}>
@@ -95,7 +96,7 @@ function LocalClipCard({ asset }: { asset: MediaLibrary.Asset }) {
             {formatDate(asset.creationTime)}
           </Text>
           <View style={styles.resBadge}>
-            <Text style={styles.resBadgeText}>{formatFileSize(asset.fileSize ?? 0)}</Text>
+            <Text style={styles.resBadgeText}>{formatFileSize((asset as any).fileSize ?? 0)}</Text>
           </View>
         </View>
         <View style={styles.clipStats}>
@@ -109,9 +110,9 @@ function LocalClipCard({ asset }: { asset: MediaLibrary.Asset }) {
           </View>
         </View>
       </View>
-      <View style={styles.downloadBtn}>
+      <TouchableOpacity style={styles.downloadBtn} onPress={onPlay} activeOpacity={0.8}>
         <FontAwesome5 name="play-circle" size={22} color={Colors.tertiaryContainer} solid />
-      </View>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -179,12 +180,29 @@ function ClipCard({
   );
 }
 
+// ─── Video Player Modal ────────────────────────────────────────────────────
+
+function VideoPlayerModal({ uri, onClose }: { uri: string; onClose: () => void }) {
+  const player = useVideoPlayer(uri, (p) => { p.play(); });
+  return (
+    <Modal visible animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+      <View style={styles.playerContainer}>
+        <VideoView player={player} style={styles.playerVideo} allowsFullscreen allowsPictureInPicture />
+        <TouchableOpacity style={styles.playerClose} onPress={onClose} activeOpacity={0.8}>
+          <FontAwesome5 name="times" size={18} color={Colors.onSurface} solid />
+        </TouchableOpacity>
+      </View>
+    </Modal>
+  );
+}
+
 // ─── Screen ────────────────────────────────────────────────────────────────
 
 export default function GalleryScreen() {
   const router = useRouter();
   const sessions = useQuery(api.queries.getSessionHistory, { limit: 50 });
   const [filter, setFilter] = useState<Filter>("ALL");
+  const [playingUri, setPlayingUri] = useState<string | null>(null);
 
   // Local recordings from device media library
   const [localClips, setLocalClips] = useState<MediaLibrary.Asset[]>([]);
@@ -246,6 +264,9 @@ export default function GalleryScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
+      {playingUri && (
+        <VideoPlayerModal uri={playingUri} onClose={() => setPlayingUri(null)} />
+      )}
       {/* Header */}
       <View style={styles.header}>
         <View>
@@ -319,7 +340,7 @@ export default function GalleryScreen() {
               </View>
               <View style={styles.clipList}>
                 {filteredLocalClips.map((a) => (
-                  <LocalClipCard key={a.id} asset={a} />
+                  <LocalClipCard key={a.id} asset={a} onPlay={() => setPlayingUri(a.uri)} />
                 ))}
               </View>
             </View>
@@ -623,5 +644,24 @@ const styles = StyleSheet.create({
   },
   downloadBtn: {
     padding: 16,
+  },
+  playerContainer: {
+    flex: 1,
+    backgroundColor: "#000",
+    justifyContent: "center",
+  },
+  playerVideo: {
+    flex: 1,
+  },
+  playerClose: {
+    position: "absolute",
+    top: 48,
+    right: 20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    alignItems: "center",
+    justifyContent: "center",
   },
 });
