@@ -18,7 +18,7 @@ import {
   useSkiaFrameProcessor,
 } from "react-native-vision-camera";
 import { Skia, useFont } from "@shopify/react-native-skia";
-import { useSharedValue } from "react-native-reanimated";
+import { useSharedValue } from "react-native-worklets-core";
 import * as MediaLibrary from "expo-media-library";
 import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";

@@ -83,7 +83,8 @@
           "enableMicrophonePermission": true,
           "microphonePermissionText": "StreamDash needs microphone access for stream audio."
         }
-      ]
+      ],
+      "react-native-worklets-core"
     ],
     "experiments": {
       "typedRoutes": true
