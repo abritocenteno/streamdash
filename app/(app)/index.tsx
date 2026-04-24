@@ -83,6 +83,31 @@ function PermissionScreen({ status }: { status: "checking" | "denied" }) {
   );
 }
 
+// ─── Error boundary ─────────────────────────────────────────────────────────
+
+class CameraErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <View style={{ flex: 1, backgroundColor: "#000", alignItems: "center", justifyContent: "center", padding: 32 }}>
+          <Text style={{ color: "#FF4444", fontWeight: "700", fontSize: 14, marginBottom: 12 }}>
+            Camera Error
+          </Text>
+          <Text style={{ color: "#E2E2E8", fontSize: 12, textAlign: "center", fontFamily: "monospace" }}>
+            {this.state.error.message}
+          </Text>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // ─── Main screen ────────────────────────────────────────────────────────────
 
 export default function DashcamScreen() {
@@ -92,7 +117,11 @@ export default function DashcamScreen() {
     return <PermissionScreen status={permissions} />;
   }
 
-  return <DashcamView />;
+  return (
+    <CameraErrorBoundary>
+      <DashcamView />
+    </CameraErrorBoundary>
+  );
 }
 
 // ─── Camera view ────────────────────────────────────────────────────────────
