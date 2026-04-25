@@ -5,6 +5,7 @@ import {
   Dimensions,
   Linking,
   PanResponder,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -339,10 +340,19 @@ function DashcamView() {
       Alert.alert("Permission needed", "Allow media library access to save recordings.");
       return;
     }
+    // Request MANAGE_MEDIA on Android 11+ (one-time Settings redirect).
+    // Once granted, clips save to albums without a per-clip system dialog.
+    if (Platform.OS === "android" && (Platform.Version as number) >= 30) {
+      await MediaLibrary.requestPermissionsAsync(true);
+    }
+    // Set the shared value synchronously so the worklet thread sees it from
+    // the very first recorded frame, not after the next React render cycle.
+    hudIsRec.value = true;
     setIsRecording(true);
     cameraRef.current?.startRecording({
       videoCodec: "h265",
       onRecordingFinished: async (video) => {
+        hudIsRec.value = false;
         setIsRecording(false);
         try {
           const asset = await MediaLibrary.createAssetAsync(video.path);
@@ -357,16 +367,17 @@ function DashcamView() {
         }
       },
       onRecordingError: (error) => {
+        hudIsRec.value = false;
         console.error("[DashcamScreen] record error", error);
         setIsRecording(false);
       },
     });
-  }, []);
+  }, [hudIsRec]);
 
-  // stopRecording() returns a Promise; onRecordingFinished fires after it resolves
   const handleStopRecord = useCallback(async () => {
+    hudIsRec.value = false;
     await cameraRef.current?.stopRecording();
-  }, []);
+  }, [hudIsRec]);
 
   // ── Stream handlers ───────────────────────────────────────────────────────
 

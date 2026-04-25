@@ -34,6 +34,7 @@
     "expo-screen-orientation": "~8.0.4",
     "expo-secure-store": "~14.0.1",
     "expo-sharing": "~13.0.1",
+    "expo-speech": "~13.0.1",
     "expo-splash-screen": "~0.29.22",
     "expo-status-bar": "~2.0.1",
     "expo-video": "~2.0.6",

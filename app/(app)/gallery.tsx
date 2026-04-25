@@ -202,15 +202,33 @@ function ClipCard({
 
 // ─── Video Player Modal ────────────────────────────────────────────────────
 
-function VideoPlayerModal({ uri, onClose }: { uri: string; onClose: () => void }) {
-  const player = useVideoPlayer(uri, (p) => { p.play(); });
+function VideoPlayerModal({
+  asset,
+  onClose,
+  onShare,
+  onDelete,
+}: {
+  asset: MediaLibrary.Asset;
+  onClose: () => void;
+  onShare: () => void;
+  onDelete: () => void;
+}) {
+  const player = useVideoPlayer(asset.uri, (p) => { p.play(); });
   return (
     <Modal visible animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <View style={styles.playerContainer}>
         <VideoView player={player} style={styles.playerVideo} allowsFullscreen allowsPictureInPicture />
-        <TouchableOpacity style={styles.playerClose} onPress={onClose} activeOpacity={0.8}>
-          <FontAwesome5 name="times" size={18} color={Colors.onSurface} solid />
-        </TouchableOpacity>
+        <View style={styles.playerTopBar}>
+          <TouchableOpacity style={styles.playerActionBtn} onPress={onShare} activeOpacity={0.8}>
+            <FontAwesome5 name="share-alt" size={16} color={Colors.onSurface} solid />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.playerActionBtn} onPress={onDelete} activeOpacity={0.8}>
+            <FontAwesome5 name="trash" size={16} color={Colors.error} solid />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.playerActionBtn} onPress={onClose} activeOpacity={0.8}>
+            <FontAwesome5 name="times" size={16} color={Colors.onSurface} solid />
+          </TouchableOpacity>
+        </View>
       </View>
     </Modal>
   );
@@ -222,7 +240,7 @@ export default function GalleryScreen() {
   const router = useRouter();
   const sessions = useQuery(api.queries.getSessionHistory, { limit: 50 });
   const [filter, setFilter] = useState<Filter>("ALL");
-  const [playingUri, setPlayingUri] = useState<string | null>(null);
+  const [playingAsset, setPlayingAsset] = useState<MediaLibrary.Asset | null>(null);
 
   // Local recordings from device media library
   const [localClips, setLocalClips] = useState<MediaLibrary.Asset[]>([]);
@@ -306,8 +324,13 @@ export default function GalleryScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
-      {playingUri && (
-        <VideoPlayerModal uri={playingUri} onClose={() => setPlayingUri(null)} />
+      {playingAsset && (
+        <VideoPlayerModal
+          asset={playingAsset}
+          onClose={() => setPlayingAsset(null)}
+          onShare={() => handleShareClip(playingAsset)}
+          onDelete={() => { setPlayingAsset(null); handleDeleteClip(playingAsset); }}
+        />
       )}
       {/* Header */}
       <View style={styles.header}>
@@ -385,7 +408,7 @@ export default function GalleryScreen() {
                   <LocalClipCard
                     key={a.id}
                     asset={a}
-                    onPlay={() => setPlayingUri(a.uri)}
+                    onPlay={() => setPlayingAsset(a)}
                     onShare={() => handleShareClip(a)}
                     onDelete={() => handleDeleteClip(a)}
                   />
@@ -713,10 +736,14 @@ const styles = StyleSheet.create({
   playerVideo: {
     flex: 1,
   },
-  playerClose: {
+  playerTopBar: {
     position: "absolute",
     top: 48,
-    right: 20,
+    right: 16,
+    flexDirection: "row",
+    gap: 8,
+  },
+  playerActionBtn: {
     width: 40,
     height: 40,
     borderRadius: 20,

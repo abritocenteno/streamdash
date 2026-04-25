@@ -29,6 +29,7 @@ import { useGPS } from "@/hooks/useGPS";
 import { Colors, Typography, Radius } from "@/constants/theme";
 import { Ionicons } from "@expo/vector-icons";
 import { MiniCam } from "@/components/MiniCam";
+import * as Speech from "expo-speech";
 
 const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY;
 const STYLE_URL = MAPTILER_KEY
@@ -193,6 +194,8 @@ export default function MapScreen() {
   const [currentStepIdx, setCurrentStepIdx] = useState(0);
   const [routeInfo, setRouteInfo] = useState<{ distance: string; duration: string } | null>(null);
   const [isFetchingRoute, setIsFetchingRoute] = useState(false);
+  const [navStarted, setNavStarted] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState(13);
 
   const { location } = useGPS({ enabled: true });
   const sessions = useQuery(api.queries.getSessionHistory, { limit: 1 });
@@ -221,6 +224,13 @@ export default function MapScreen() {
       setCurrentStepIdx((i) => i + 1);
     }
   }, [location, steps, currentStepIdx]);
+
+  // Voice guidance — announce each step as it becomes active
+  useEffect(() => {
+    if (!isNavigating || steps.length === 0) return;
+    const step = steps[currentStepIdx];
+    if (step) Speech.speak(step.instruction, { language: "en-US", rate: 0.9 });
+  }, [currentStepIdx, isNavigating]);
 
   const centerOnUser = () => {
     if (location) {
@@ -328,6 +338,8 @@ export default function MapScreen() {
   );
 
   const clearNavigation = () => {
+    Speech.stop();
+    setNavStarted(false);
     setDestination(null);
     setRoute(null);
     setSteps([]);
@@ -340,7 +352,7 @@ export default function MapScreen() {
 
   // ── Derived ──────────────────────────────────────────────────────────────
 
-  const isNavigating = !!destination && !!route;
+  const isNavigating = !!destination && !!route && navStarted;
   const currentStep = steps[currentStepIdx] ?? null;
   const showSuggestions = isSearchFocused && suggestions.length > 0;
 
@@ -356,10 +368,10 @@ export default function MapScreen() {
       >
         <Camera
           ref={cameraRef}
-          centerCoordinate={
-            location ? [location.lng, location.lat] : [-8.6, 41.15]
-          }
-          zoomLevel={13}
+          followUserLocation={isNavigating}
+          followUserMode={isNavigating ? "course" : "normal"}
+          centerCoordinate={location ? [location.lng, location.lat] : [-8.6, 41.15]}
+          zoomLevel={zoomLevel}
         />
 
         <UserLocation visible renderMode="native" />
@@ -546,10 +558,24 @@ export default function MapScreen() {
         <TouchableOpacity style={styles.mapBtn} onPress={centerOnUser}>
           <Ionicons name="locate-outline" size={18} color={Colors.tertiaryContainer} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.mapBtn}>
+        <TouchableOpacity
+          style={styles.mapBtn}
+          onPress={() => {
+            const next = Math.min(zoomLevel + 1, 20);
+            setZoomLevel(next);
+            cameraRef.current?.setCamera({ zoomLevel: next, animationDuration: 300 });
+          }}
+        >
           <Ionicons name="add-outline" size={18} color={Colors.onSurface} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.mapBtn}>
+        <TouchableOpacity
+          style={styles.mapBtn}
+          onPress={() => {
+            const next = Math.max(zoomLevel - 1, 1);
+            setZoomLevel(next);
+            cameraRef.current?.setCamera({ zoomLevel: next, animationDuration: 300 });
+          }}
+        >
           <Ionicons name="remove-outline" size={18} color={Colors.onSurface} />
         </TouchableOpacity>
         {!isNavigating && (
@@ -575,7 +601,7 @@ export default function MapScreen() {
       </Animated.View>
 
       {/* ── Nearby events card (not navigating) ─────────────────────── */}
-      {showEvents && !isNavigating && location && (
+      {showEvents && !isNavigating && !destination && location && (
         <View style={styles.eventsCard}>
           <Text style={styles.eventsTitle}>NEARBY EVENTS</Text>
           {MOCK_HAZARDS.slice(0, 2).map((h) => (
@@ -587,6 +613,52 @@ export default function MapScreen() {
               <Text style={styles.eventDist}>{h.distance}</Text>
             </View>
           ))}
+        </View>
+      )}
+
+      {/* ── Pre-nav confirmation card ────────────────────────────────── */}
+      {destination && route && !navStarted && (
+        <View style={styles.preNavCard}>
+          <View style={styles.preNavInfo}>
+            <Ionicons name="navigate" size={16} color={Colors.tertiaryContainer} />
+            <View style={styles.preNavTextWrap}>
+              <Text style={styles.preNavDest} numberOfLines={1}>
+                {destination.name.split(",")[0]}
+              </Text>
+              {routeInfo && (
+                <Text style={styles.preNavMeta}>
+                  {routeInfo.duration} · {routeInfo.distance}
+                </Text>
+              )}
+            </View>
+          </View>
+          <View style={styles.preNavButtons}>
+            <TouchableOpacity style={styles.preNavCancel} onPress={clearNavigation}>
+              <Text style={styles.preNavCancelText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.preNavStart}
+              onPress={() => {
+                setNavStarted(true);
+                if (steps.length > 0) {
+                  Speech.speak(steps[0].instruction, { language: "en-US", rate: 0.9 });
+                }
+              }}
+            >
+              <Ionicons name="navigate" size={14} color={Colors.background} />
+              <Text style={styles.preNavStartText}>Start</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* ── End navigation button ────────────────────────────────────── */}
+      {isNavigating && (
+        <View style={styles.endNavWrapper}>
+          <TouchableOpacity style={styles.endNavBtn} onPress={clearNavigation}>
+            <Ionicons name="stop-circle" size={16} color={Colors.error} />
+            <Text style={styles.endNavText}>End Navigation</Text>
+          </TouchableOpacity>
         </View>
       )}
     </View>
@@ -870,4 +942,100 @@ const styles = StyleSheet.create({
   eventDot: { width: 8, height: 8, borderRadius: 4 },
   eventLabel: { color: Colors.onSurface, fontFamily: Typography.bodyMedium, fontSize: 11 },
   eventDist: { color: Colors.outline, fontFamily: Typography.headlineMedium, fontSize: 10, letterSpacing: 0.5 },
+
+  // ── Pre-nav card
+  preNavCard: {
+    position: "absolute",
+    bottom: 100,
+    left: 16,
+    right: 16,
+    backgroundColor: Colors.surfaceContainerHigh,
+    borderRadius: Radius.lg,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.outlineVariant,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+    gap: 12,
+  },
+  preNavInfo: { flexDirection: "row", alignItems: "center", gap: 10 },
+  preNavTextWrap: { flex: 1 },
+  preNavDest: {
+    color: Colors.onSurface,
+    fontFamily: Typography.headlineMedium,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  preNavMeta: {
+    color: Colors.outline,
+    fontFamily: Typography.body,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  preNavButtons: { flexDirection: "row", gap: 8 },
+  preNavCancel: {
+    flex: 1,
+    height: 40,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.outlineVariant,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  preNavCancelText: {
+    color: Colors.onSurfaceVariant,
+    fontFamily: Typography.bodyMedium,
+    fontSize: 13,
+  },
+  preNavStart: {
+    flex: 2,
+    height: 40,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.tertiaryContainer,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  preNavStartText: {
+    color: Colors.background,
+    fontFamily: Typography.headlineMedium,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
+  // ── End nav button
+  endNavWrapper: {
+    position: "absolute",
+    bottom: 110,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+  },
+  endNavBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: Radius.full,
+    backgroundColor: "rgba(191,0,43,0.15)",
+    borderWidth: 1.5,
+    borderColor: Colors.error,
+    shadowColor: Colors.error,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  endNavText: {
+    color: Colors.error,
+    fontFamily: Typography.headlineMedium,
+    fontSize: 13,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
 });
