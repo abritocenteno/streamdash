@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import {
+  Alert,
   Image,
   Modal,
   ScrollView,
@@ -9,6 +10,7 @@ import {
   View,
   ActivityIndicator,
 } from "react-native";
+import * as Sharing from "expo-sharing";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useQuery } from "convex/react";
@@ -73,7 +75,17 @@ type Filter = "ALL" | "TODAY" | "EVENTS";
 
 // ─── Local clip card ───────────────────────────────────────────────────────
 
-function LocalClipCard({ asset, onPlay }: { asset: MediaLibrary.Asset; onPlay: () => void }) {
+function LocalClipCard({
+  asset,
+  onPlay,
+  onShare,
+  onDelete,
+}: {
+  asset: MediaLibrary.Asset;
+  onPlay: () => void;
+  onShare: () => void;
+  onDelete: () => void;
+}) {
   return (
     <View style={styles.clipCard}>
       <View style={styles.thumbBg}>
@@ -110,9 +122,17 @@ function LocalClipCard({ asset, onPlay }: { asset: MediaLibrary.Asset; onPlay: (
           </View>
         </View>
       </View>
-      <TouchableOpacity style={styles.downloadBtn} onPress={onPlay} activeOpacity={0.8}>
-        <FontAwesome5 name="play-circle" size={22} color={Colors.tertiaryContainer} solid />
-      </TouchableOpacity>
+      <View style={styles.clipActions}>
+        <TouchableOpacity style={styles.actionBtn} onPress={onPlay} activeOpacity={0.8}>
+          <FontAwesome5 name="play" size={13} color={Colors.tertiaryContainer} solid />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.actionBtn} onPress={onShare} activeOpacity={0.8}>
+          <FontAwesome5 name="share-alt" size={13} color={Colors.outline} solid />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.actionBtn} onPress={onDelete} activeOpacity={0.8}>
+          <FontAwesome5 name="trash" size={13} color={Colors.error} solid />
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -231,6 +251,28 @@ export default function GalleryScreen() {
     loadLocalClips();
   }, [loadLocalClips]);
 
+  const handleShareClip = useCallback(async (asset: MediaLibrary.Asset) => {
+    await Sharing.shareAsync(asset.uri);
+  }, []);
+
+  const handleDeleteClip = useCallback((asset: MediaLibrary.Asset) => {
+    Alert.alert(
+      "Delete clip",
+      `"${asset.filename}" will be permanently removed from your device.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            await MediaLibrary.deleteAssetsAsync([asset.id]);
+            await loadLocalClips();
+          },
+        },
+      ]
+    );
+  }, [loadLocalClips]);
+
   const filtered = React.useMemo(() => {
     if (!sessions) return [];
     const todayStart = new Date();
@@ -340,7 +382,13 @@ export default function GalleryScreen() {
               </View>
               <View style={styles.clipList}>
                 {filteredLocalClips.map((a) => (
-                  <LocalClipCard key={a.id} asset={a} onPlay={() => setPlayingUri(a.uri)} />
+                  <LocalClipCard
+                    key={a.id}
+                    asset={a}
+                    onPlay={() => setPlayingUri(a.uri)}
+                    onShare={() => handleShareClip(a)}
+                    onDelete={() => handleDeleteClip(a)}
+                  />
                 ))}
               </View>
             </View>
@@ -642,8 +690,20 @@ const styles = StyleSheet.create({
     fontFamily: Typography.body,
     fontSize: 10,
   },
-  downloadBtn: {
-    padding: 16,
+  clipActions: {
+    flexDirection: "column",
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    gap: 6,
+    alignItems: "center",
+  },
+  actionBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    backgroundColor: Colors.surfaceContainerHighest,
+    alignItems: "center",
+    justifyContent: "center",
   },
   playerContainer: {
     flex: 1,
