@@ -34,6 +34,7 @@
         "backgroundColor": "#111318"
       },
       "package": "com.antigravity.streamdash",
+      "minSdkVersion": 26,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
