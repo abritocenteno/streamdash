@@ -16,7 +16,7 @@
     "@expo-google-fonts/space-grotesk": "^0.4.1",
     "@maplibre/maplibre-react-native": "^10.4.2",
     "@resvg/resvg-js": "^2.6.2",
-    "@shopify/react-native-skia": "~1.5.0",
+    "@shopify/react-native-skia": "1.5.0",
     "@tanstack/react-query": "^5.64.2",
     "convex": "^1.17.4",
     "expo": "^52.0.37",
