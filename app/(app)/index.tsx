@@ -5,7 +5,6 @@ import {
   Dimensions,
   Linking,
   PanResponder,
-  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -16,10 +15,7 @@ import {
   Camera,
   useCameraDevice,
   useCameraFormat,
-  useSkiaFrameProcessor,
 } from "react-native-vision-camera";
-import { Skia, useFont } from "@shopify/react-native-skia";
-import { useSharedValue } from "react-native-worklets-core";
 import * as MediaLibrary from "expo-media-library";
 import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -39,11 +35,6 @@ import { FontAwesome5 } from "@expo/vector-icons";
 import { LandscapeHUD } from "@/components/LandscapeHUD";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { useCameraState } from "@/contexts/CameraContext";
-
-// Fonts for Skia frame processor HUD
-// Sizes chosen for readability at 1080p–4K recording resolutions
-const BOLD_TTF = require("../../assets/fonts/SpaceGrotesk_700Bold.ttf");
-const MEDIUM_TTF = require("../../assets/fonts/SpaceGrotesk_500Medium.ttf");
 
 type CameraMode = "record" | "live";
 
@@ -208,91 +199,6 @@ function DashcamView() {
   const endSession = useMutation(api.sessions.endSession);
   const updateGPS = useMutation(api.sessions.updateGPS);
 
-  // ── Skia frame processor HUD ──────────────────────────────────────────────
-  // Shared values bridge React state → worklet thread
-
-  const hudSpeed    = useSharedValue("0");
-  const hudLat      = useSharedValue("0.00000");
-  const hudLng      = useSharedValue("0.00000");
-  const hudIsLive   = useSharedValue(false);
-  const hudIsRec    = useSharedValue(false);
-  const hudDuration = useSharedValue("00:00:00");
-
-  useEffect(() => { hudIsLive.value = isLive; },      [isLive]);
-  useEffect(() => { hudIsRec.value  = isRecording; }, [isRecording]);
-  useEffect(() => { hudDuration.value = duration; },  [duration]);
-
-  // Fonts loaded once on mount; null until ready (handled in worklet guard)
-  const fontLg = useFont(BOLD_TTF, 72);   // speed number
-  const fontMd = useFont(BOLD_TTF, 28);   // LIVE/REC label, KM/H
-  const fontSm = useFont(MEDIUM_TTF, 22); // coordinates
-
-  const frameProcessor = useSkiaFrameProcessor(
-    (frame) => {
-      "worklet";
-      frame.render(); // draw camera frame first
-
-      // Only burn HUD when actively recording or streaming
-      if (!hudIsRec.value && !hudIsLive.value) return;
-      if (!fontLg || !fontMd || !fontSm) return;
-
-      const W = frame.width;
-      const H = frame.height;
-      const P = Math.round(H * 0.022); // ~48px at 4K, ~24px at 1080p
-
-      // ── Paints ──────────────────────────────────────────────────
-      const cyanPaint = Skia.Paint();
-      cyanPaint.setColor(Skia.Color("#00E5FF"));
-      cyanPaint.setAntiAlias(true);
-
-      const whitePaint = Skia.Paint();
-      whitePaint.setColor(Skia.Color("#E2E2E8"));
-      whitePaint.setAntiAlias(true);
-
-      const mutedPaint = Skia.Paint();
-      mutedPaint.setColor(Skia.Color("#849396"));
-      mutedPaint.setAntiAlias(true);
-
-      // ── LIVE / REC badge (top-left) ──────────────────────────────
-      const badgeH = 36;
-      const badgeW = 90;
-      const bgPaint = Skia.Paint();
-      bgPaint.setColor(Skia.Color("rgba(191,0,43,0.75)"));
-      frame.drawRect(Skia.XYWHRect(P, P, badgeW, badgeH), bgPaint);
-
-      // Red dot
-      const dotPaint = Skia.Paint();
-      dotPaint.setColor(Skia.Color("#FF4444"));
-      dotPaint.setAntiAlias(true);
-      frame.drawCircle(P + 16, P + badgeH / 2, 6, dotPaint);
-
-      // Label text
-      const label = hudIsLive.value ? "LIVE" : "REC";
-      frame.drawText(label, P + 28, P + 25, whitePaint, fontMd);
-
-      // Timer (right of badge, when live)
-      if (hudIsLive.value) {
-        frame.drawText(hudDuration.value, P + badgeW + 12, P + 25, cyanPaint, fontMd);
-      }
-
-      // ── Speed (bottom-left) ──────────────────────────────────────
-      // fontLg baseline sits ~72px below y; place at H - P - label height
-      const speedY = H - P - 28;
-      frame.drawText(hudSpeed.value, P, speedY, cyanPaint, fontLg);
-      frame.drawText("KM/H", P + 4, H - P, mutedPaint, fontMd);
-
-      // ── Coords (bottom-right) ────────────────────────────────────
-      const coordX = W - 250 - P;
-      const coordY1 = H - P - 28;
-      const coordY2 = H - P;
-      frame.drawText("LAT", coordX, coordY1, cyanPaint, fontSm);
-      frame.drawText(hudLat.value, coordX + 48, coordY1, whitePaint, fontSm);
-      frame.drawText("LNG", coordX, coordY2, cyanPaint, fontSm);
-      frame.drawText(hudLng.value, coordX + 48, coordY2, whitePaint, fontSm);
-    },
-    [fontLg, fontMd, fontSm, hudIsRec, hudIsLive, hudSpeed, hudLat, hudLng, hudDuration]
-  );
-
   // ── GPS ───────────────────────────────────────────────────────────────────
 
   const { location } = useGPS({
@@ -300,10 +206,6 @@ function DashcamView() {
     onUpdate: useCallback(
       async (point: GPSPoint) => {
         setGpsTrail((prev) => [...prev, point].slice(-20));
-        // Keep HUD shared values in sync with live GPS
-        hudSpeed.value = (point.speed * 3.6).toFixed(0);
-        hudLat.value   = point.lat.toFixed(5);
-        hudLng.value   = point.lng.toFixed(5);
         if (sessionId) {
           await updateGPS({
             sessionId,
@@ -340,44 +242,33 @@ function DashcamView() {
       Alert.alert("Permission needed", "Allow media library access to save recordings.");
       return;
     }
-    // Request MANAGE_MEDIA on Android 11+ (one-time Settings redirect).
-    // Once granted, clips save to albums without a per-clip system dialog.
-    if (Platform.OS === "android" && (Platform.Version as number) >= 30) {
-      await MediaLibrary.requestPermissionsAsync(true);
-    }
-    // Set the shared value synchronously so the worklet thread sees it from
-    // the very first recorded frame, not after the next React render cycle.
-    hudIsRec.value = true;
     setIsRecording(true);
     cameraRef.current?.startRecording({
-      videoCodec: "h265",
+      videoCodec: "h264",
       onRecordingFinished: async (video) => {
-        hudIsRec.value = false;
         setIsRecording(false);
         try {
           const asset = await MediaLibrary.createAssetAsync(video.path);
           const album = await MediaLibrary.getAlbumAsync("StreamCam");
           if (album) {
-            await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
+            await MediaLibrary.addAssetsToAlbumAsync([asset], album, true);
           } else {
-            await MediaLibrary.createAlbumAsync("StreamCam", asset, false);
+            await MediaLibrary.createAlbumAsync("StreamCam", asset, true);
           }
         } catch (err) {
           console.error("[DashcamScreen] save error", err);
         }
       },
       onRecordingError: (error) => {
-        hudIsRec.value = false;
         console.error("[DashcamScreen] record error", error);
         setIsRecording(false);
       },
     });
-  }, [hudIsRec]);
+  }, []);
 
   const handleStopRecord = useCallback(async () => {
-    hudIsRec.value = false;
     await cameraRef.current?.stopRecording();
-  }, [hudIsRec]);
+  }, []);
 
   // ── Stream handlers ───────────────────────────────────────────────────────
 
@@ -454,7 +345,6 @@ function DashcamView() {
           isActive={cameraIsActive}
           video={true}
           audio={!isMuted}
-          frameProcessor={frameProcessor}
           style={StyleSheet.absoluteFill}
         />
       )}
@@ -476,11 +366,13 @@ function DashcamView() {
         style={styles.statusBarScrim}
       />
 
-      {/* React HUD — shown during idle preview; frame processor takes over
-          during recording/streaming so the HUD is burned into the video */}
-      {!isRecording && !isStreaming && (
-        <HUDOverlay isLive={isLive} duration={duration} location={location} />
-      )}
+      {/* HUD overlay — always visible; shows REC/LIVE badge and GPS data */}
+      <HUDOverlay
+        isLive={isLive}
+        isRecording={isRecording}
+        duration={duration}
+        location={location}
+      />
 
       {/* Draggable MiniMap PiP */}
       <Animated.View

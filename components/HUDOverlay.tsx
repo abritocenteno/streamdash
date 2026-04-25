@@ -8,39 +8,41 @@ interface HUDOverlayProps {
   isLive: boolean;
   duration: string;
   location: GPSPoint | null;
+  isRecording?: boolean;
 }
 
-// ─── Live Badge ─────────────────────────────────────────────────────────────
-// Per design: record states use onErrorContainer red with pulsing opacity 1.0→0.6
+// ─── Status Badge ────────────────────────────────────────────────────────────
 
-function LiveBadge({ isLive }: { isLive: boolean }) {
+function StatusBadge({ isLive, isRecording }: { isLive: boolean; isRecording?: boolean }) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const active = isLive || !!isRecording;
 
   useEffect(() => {
-    if (!isLive) return;
+    if (!active) return;
     const pulse = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 0.6,
-          duration: 700,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 700,
-          useNativeDriver: true,
-        }),
+        Animated.timing(pulseAnim, { toValue: 0.6, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1,   duration: 700, useNativeDriver: true }),
       ])
     );
     pulse.start();
     return () => pulse.stop();
-  }, [isLive, pulseAnim]);
+  }, [active, pulseAnim]);
 
   if (isLive) {
     return (
       <Animated.View style={[styles.liveBadge, styles.liveBadgeActive, { opacity: pulseAnim }]}>
         <View style={styles.liveDot} />
         <Text style={styles.liveBadgeTextActive}>LIVE</Text>
+      </Animated.View>
+    );
+  }
+
+  if (isRecording) {
+    return (
+      <Animated.View style={[styles.liveBadge, styles.recBadgeActive, { opacity: pulseAnim }]}>
+        <View style={styles.liveDot} />
+        <Text style={styles.liveBadgeTextActive}>REC</Text>
       </Animated.View>
     );
   }
@@ -54,7 +56,7 @@ function LiveBadge({ isLive }: { isLive: boolean }) {
 
 // ─── HUD Overlay ────────────────────────────────────────────────────────────
 
-export function HUDOverlay({ isLive, duration, location }: HUDOverlayProps) {
+export function HUDOverlay({ isLive, duration, location, isRecording }: HUDOverlayProps) {
   const insets = useSafeAreaInsets();
   const speedKph = location ? (location.speed * 3.6).toFixed(0) : "0";
   const lat = location ? location.lat.toFixed(5) : "0.00000";
@@ -62,9 +64,9 @@ export function HUDOverlay({ isLive, duration, location }: HUDOverlayProps) {
 
   return (
     <View style={styles.container} pointerEvents="box-none">
-      {/* Top row — Live badge + Timer, aligned with mic button */}
+      {/* Top row — Status badge + Timer, aligned with mic button */}
       <View style={[styles.topRow, { paddingTop: insets.top + 8 }]}>
-        <LiveBadge isLive={isLive} />
+        <StatusBadge isLive={isLive} isRecording={isRecording} />
         {isLive && (
           <View style={styles.timerBadge}>
             <Text style={styles.timerText}>{duration}</Text>
@@ -117,7 +119,11 @@ const styles = StyleSheet.create({
     borderColor: Colors.glassBorder,
   },
   liveBadgeActive: {
-    backgroundColor: "rgba(191,0,43,0.25)",  // record red glass
+    backgroundColor: "rgba(191,0,43,0.25)",
+    borderColor: "rgba(191,0,43,0.4)",
+  },
+  recBadgeActive: {
+    backgroundColor: "rgba(191,0,43,0.25)",
     borderColor: "rgba(191,0,43,0.4)",
   },
   liveDot: {

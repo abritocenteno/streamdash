@@ -809,8 +809,8 @@ const styles = StyleSheet.create({
   // ── Bearing card
   bearingCard: {
     position: "absolute",
-    top: 90,
-    left: 16,
+    bottom: 202,
+    left: 20,
     backgroundColor: Colors.glassBg,
     borderRadius: Radius.lg,
     paddingHorizontal: 12,

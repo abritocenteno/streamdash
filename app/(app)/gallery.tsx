@@ -283,8 +283,20 @@ export default function GalleryScreen() {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
-            await MediaLibrary.deleteAssetsAsync([asset.id]);
-            await loadLocalClips();
+            try {
+              const deleted = await MediaLibrary.deleteAssetsAsync([asset.id]);
+              if (deleted) {
+                await loadLocalClips();
+              } else {
+                Alert.alert(
+                  "Not deleted",
+                  "Approve the system permission dialog to delete this clip. If it keeps appearing, enable 'Allow media management' for StreamDash in your device Settings."
+                );
+              }
+            } catch (err) {
+              console.error("[Gallery] delete error", err);
+              Alert.alert("Error", "Could not delete this clip.");
+            }
           },
         },
       ]
