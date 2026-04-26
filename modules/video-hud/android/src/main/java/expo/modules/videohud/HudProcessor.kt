@@ -4,6 +4,7 @@ import android.graphics.*
 import android.media.*
 import android.media.MediaCodecInfo.CodecCapabilities
 import android.opengl.*
+import android.opengl.Matrix
 import android.view.Surface
 import java.io.File
 import java.nio.ByteBuffer
