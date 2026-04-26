@@ -17,8 +17,7 @@ import {
   useCameraFormat,
 } from "react-native-vision-camera";
 import * as MediaLibrary from "expo-media-library";
-import * as FileSystem from "expo-file-system";
-import { FFmpegKit, ReturnCode } from "ffmpeg-kit-react-native";
+import { burnHud, type GpsSample } from "video-hud";
 import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -37,59 +36,6 @@ import { FontAwesome5 } from "@expo/vector-icons";
 import { LandscapeHUD } from "@/components/LandscapeHUD";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { useCameraState } from "@/contexts/CameraContext";
-
-// ─── HUD post-processing helpers ────────────────────────────────────────────
-
-type GpsSample = { t: number; speed: number; lat: number; lng: number };
-
-function msToAssTime(ms: number): string {
-  const cs = Math.floor((ms % 1000) / 10);
-  const s  = Math.floor(ms / 1000) % 60;
-  const m  = Math.floor(ms / 60000) % 60;
-  const h  = Math.floor(ms / 3600000);
-  return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
-}
-
-function buildAssHUD(samples: GpsSample[]): string {
-  const header = [
-    "[Script Info]",
-    "ScriptType: v4.00+",
-    "PlayResX: 1920",
-    "PlayResY: 1080",
-    "",
-    "[V4+ Styles]",
-    "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-    // bottom-left, large, cyan, bold, 2px outline, 1px shadow
-    "Style: Speed,Roboto,52,&H0000E5FF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,1,24,24,60,1",
-    // bottom-right, small, white, 2px outline, 1px shadow
-    "Style: Coords,Roboto,24,&H00E8E2E2,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,3,24,24,36,1",
-    "",
-    "[Events]",
-    "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
-  ].join("\n");
-
-  if (samples.length === 0) return header + "\n";
-
-  // Ensure HUD shows from t=0 even if first GPS update is delayed
-  const log: GpsSample[] =
-    samples[0].t > 0.5 ? [{ ...samples[0], t: 0 }, ...samples] : [...samples];
-
-  const dialogues = log
-    .map((s, i) => {
-      const startMs = s.t * 1000;
-      const endMs   = i < log.length - 1 ? log[i + 1].t * 1000 : s.t * 1000 + 5000;
-      const start   = msToAssTime(startMs);
-      const end     = msToAssTime(endMs);
-      return [
-        `Dialogue: 0,${start},${end},Speed,,0,0,0,,${s.speed} KMH`,
-        // \\N is ASS hard-newline (becomes \N in the file)
-        `Dialogue: 0,${start},${end},Coords,,0,0,0,,LAT ${s.lat.toFixed(5)}\\NLNG ${s.lng.toFixed(5)}`,
-      ].join("\n");
-    })
-    .join("\n");
-
-  return header + "\n" + dialogues + "\n";
-}
 
 type CameraMode = "record" | "live";
 
@@ -316,44 +262,26 @@ function DashcamView() {
       onRecordingFinished: async (video) => {
         setIsRecording(false);
         setIsProcessing(true);
+
+        const samples = recordingGpsRef.current;
+        // Strip the "file://" prefix — native MediaCodec wants a plain path
+        const srcPath = video.path.replace(/^file:\/\//, "");
+        const outPath = srcPath.replace(/\.mp4$/i, "_hud.mp4");
+
         try {
-          const samples  = recordingGpsRef.current;
-          const cacheDir = (FileSystem.cacheDirectory ?? "file:///tmp/").replace("file://", "");
-          const ts       = Date.now();
-          const assPath  = `${cacheDir}hud_${ts}.ass`;
-          const outPath  = `${cacheDir}hud_out_${ts}.mp4`;
+          await burnHud(srcPath, outPath, samples);
 
-          await FileSystem.writeAsStringAsync(`file://${assPath}`, buildAssHUD(samples));
-
-          const session = await FFmpegKit.execute(
-            `-i "${video.path}" -vf "ass=${assPath}" -c:a copy -y "${outPath}"`
-          );
-          const rc = await session.getReturnCode();
-
-          const finalPath = ReturnCode.isSuccess(rc) ? outPath : video.path;
-          if (!ReturnCode.isSuccess(rc)) {
-            const logs = await session.getAllLogsAsString();
-            console.warn("[DashcamScreen] FFmpeg failed, saving original:", logs);
-          }
-
-          const asset = await MediaLibrary.createAssetAsync(finalPath);
+          const asset = await MediaLibrary.createAssetAsync(outPath);
           const album = await MediaLibrary.getAlbumAsync("StreamCam");
           if (album) {
             await MediaLibrary.addAssetsToAlbumAsync([asset], album, true);
           } else {
             await MediaLibrary.createAlbumAsync("StreamCam", asset, true);
           }
-
-          // Clean up temp files
-          await FileSystem.deleteAsync(`file://${assPath}`, { idempotent: true });
-          if (ReturnCode.isSuccess(rc)) {
-            await FileSystem.deleteAsync(`file://${outPath}`, { idempotent: true });
-          }
         } catch (err) {
-          console.error("[DashcamScreen] save/process error", err);
-          // Last-resort fallback: save the raw unprocessed clip
+          console.error("[DashcamScreen] HUD burn failed, saving original:", err);
           try {
-            const asset = await MediaLibrary.createAssetAsync(video.path);
+            const asset = await MediaLibrary.createAssetAsync(srcPath);
             const album = await MediaLibrary.getAlbumAsync("StreamCam");
             if (album) {
               await MediaLibrary.addAssetsToAlbumAsync([asset], album, true);

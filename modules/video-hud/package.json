@@ -1,0 +1,6 @@
+{
+  "name": "video-hud",
+  "version": "1.0.0",
+  "description": "Burns GPS HUD into video using Android MediaCodec + OpenGL ES",
+  "main": "index"
+}
