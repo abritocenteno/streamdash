@@ -2,8 +2,6 @@ package expo.modules.videohud
 
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 class VideoHudModule : Module() {
   override fun definition() = ModuleDefinition {
@@ -18,9 +16,7 @@ class VideoHudModule : Module() {
           lng      = (m["lng"]   as Number).toDouble()
         )
       }
-      withContext(Dispatchers.IO) {
-        HudProcessor().process(srcPath, dstPath, samples)
-      }
+      HudProcessor().process(srcPath, dstPath, samples)
     }
   }
 }
