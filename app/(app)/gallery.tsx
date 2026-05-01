@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import {
   Alert,
   Image,
+  Linking,
   Modal,
   ScrollView,
   StyleSheet,
@@ -12,7 +13,7 @@ import {
 } from "react-native";
 import * as Sharing from "expo-sharing";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Doc } from "@/convex/_generated/dataModel";
@@ -260,14 +261,16 @@ export default function GalleryScreen() {
       mediaType: MediaLibrary.MediaType.video,
       album,
       first: 200,
-      sortBy: [MediaLibrary.SortBy.creationTime],
+      sortBy: [[MediaLibrary.SortBy.creationTime, false]], // newest first
     });
     setLocalClips(assets);
   }, []);
 
-  useEffect(() => {
-    loadLocalClips();
-  }, [loadLocalClips]);
+  useFocusEffect(
+    useCallback(() => {
+      loadLocalClips();
+    }, [loadLocalClips])
+  );
 
   const handleShareClip = useCallback(async (asset: MediaLibrary.Asset) => {
     await Sharing.shareAsync(asset.uri);
@@ -283,19 +286,43 @@ export default function GalleryScreen() {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
+            const { status } = await MediaLibrary.requestPermissionsAsync();
+            if (status !== "granted") {
+              Alert.alert(
+                "Permission required",
+                "StreamDash needs media access to delete clips.",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  { text: "Open Settings", onPress: () => Linking.openSettings() },
+                ]
+              );
+              return;
+            }
+
             try {
               const deleted = await MediaLibrary.deleteAssetsAsync([asset.id]);
               if (deleted) {
                 await loadLocalClips();
               } else {
                 Alert.alert(
-                  "Not deleted",
-                  "Approve the system permission dialog to delete this clip. If it keeps appearing, enable 'Allow media management' for StreamDash in your device Settings."
+                  "Unable to delete",
+                  'Enable "Manage media" for StreamDash in your device settings, then try again.',
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    { text: "Open Settings", onPress: () => Linking.openSettings() },
+                  ]
                 );
               }
             } catch (err) {
               console.error("[Gallery] delete error", err);
-              Alert.alert("Error", "Could not delete this clip.");
+              Alert.alert(
+                "Unable to delete",
+                'StreamDash couldn\'t delete this clip. Enable "Manage media" in Settings to allow it.',
+                [
+                  { text: "Cancel", style: "cancel" },
+                  { text: "Open Settings", onPress: () => Linking.openSettings() },
+                ]
+              );
             }
           },
         },

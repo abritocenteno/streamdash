@@ -45,7 +45,8 @@
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_LOCATION"
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.MANAGE_MEDIA"
       ]
     },
     "web": {

@@ -271,7 +271,7 @@ function DashcamView() {
         try {
           await burnHud(srcPath, outPath, samples);
 
-          const asset = await MediaLibrary.createAssetAsync(outPath);
+          const asset = await MediaLibrary.createAssetAsync("file://" + outPath);
           const album = await MediaLibrary.getAlbumAsync("StreamCam");
           if (album) {
             await MediaLibrary.addAssetsToAlbumAsync([asset], album, true);
@@ -281,7 +281,7 @@ function DashcamView() {
         } catch (err) {
           console.error("[DashcamScreen] HUD burn failed, saving original:", err);
           try {
-            const asset = await MediaLibrary.createAssetAsync(srcPath);
+            const asset = await MediaLibrary.createAssetAsync("file://" + srcPath);
             const album = await MediaLibrary.getAlbumAsync("StreamCam");
             if (album) {
               await MediaLibrary.addAssetsToAlbumAsync([asset], album, true);
