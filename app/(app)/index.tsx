@@ -16,7 +16,7 @@ import {
   useCameraDevice,
   useCameraFormat,
 } from "react-native-vision-camera";
-import * as MediaLibrary from "expo-media-library";
+import * as FileSystem from "expo-file-system";
 import { burnHud, type GpsSample } from "video-hud";
 import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -249,11 +249,6 @@ function DashcamView() {
   // ── Record handlers ───────────────────────────────────────────────────────
 
   const handleStartRecord = useCallback(async () => {
-    const { status } = await MediaLibrary.requestPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission needed", "Allow media library access to save recordings.");
-      return;
-    }
     recordingStartRef.current = Date.now();
     recordingGpsRef.current   = [];
     setIsRecording(true);
@@ -263,37 +258,40 @@ function DashcamView() {
         setIsRecording(false);
         setIsProcessing(true);
 
-        const samples = recordingGpsRef.current;
-        // Strip the "file://" prefix — native MediaCodec wants a plain path
+        const recDir = FileSystem.documentDirectory + "recordings/";
+        await FileSystem.makeDirectoryAsync(recDir, { intermediates: true });
+
+        const ts = Date.now();
+        const outFilename = `streamdash_${ts}_hud.mp4`;
+        const outUri  = recDir + outFilename;
+        // Strip file:// — MediaCodec needs a bare path
         const srcPath = video.path.replace(/^file:\/\//, "");
-        const outPath = srcPath.replace(/\.mp4$/i, "_hud.mp4");
+        const outPath = outUri.replace(/^file:\/\//, "");
+        const samples = recordingGpsRef.current;
 
         try {
           await burnHud(srcPath, outPath, samples);
-
-          const asset = await MediaLibrary.createAssetAsync("file://" + outPath);
-          const album = await MediaLibrary.getAlbumAsync("StreamCam");
-          if (album) {
-            await MediaLibrary.addAssetsToAlbumAsync([asset], album, true);
-          } else {
-            await MediaLibrary.createAlbumAsync("StreamCam", asset, true);
-          }
         } catch (err) {
-          console.error("[DashcamScreen] HUD burn failed, saving original:", err);
+          // HUD burn failed — copy the original into our recordings dir instead
+          console.warn("[DashcamScreen] HUD burn failed, saving original:", err);
+          const origFilename = `streamdash_${ts}_orig.mp4`;
+          const origUri = recDir + origFilename;
           try {
-            const asset = await MediaLibrary.createAssetAsync("file://" + srcPath);
-            const album = await MediaLibrary.getAlbumAsync("StreamCam");
-            if (album) {
-              await MediaLibrary.addAssetsToAlbumAsync([asset], album, true);
-            } else {
-              await MediaLibrary.createAlbumAsync("StreamCam", asset, true);
-            }
+            await FileSystem.copyAsync({ from: video.path, to: origUri });
           } catch (e) {
-            console.error("[DashcamScreen] fallback save error", e);
+            console.error("[DashcamScreen] fallback copy failed:", e);
           }
-        } finally {
           setIsProcessing(false);
+          return;
         }
+
+        // Write a small metadata sidecar so the gallery knows duration + timestamp
+        const meta = JSON.stringify({ duration: video.duration, createdAt: ts });
+        try {
+          await FileSystem.writeAsStringAsync(outUri.replace(/\.mp4$/, ".json"), meta);
+        } catch (_) { /* non-fatal */ }
+
+        setIsProcessing(false);
       },
       onRecordingError: (error) => {
         console.error("[DashcamScreen] record error", error);

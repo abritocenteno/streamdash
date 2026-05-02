@@ -1,8 +1,6 @@
 import React, { useState, useCallback } from "react";
 import {
   Alert,
-  Image,
-  Linking,
   Modal,
   ScrollView,
   StyleSheet,
@@ -17,7 +15,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Doc } from "@/convex/_generated/dataModel";
-import * as MediaLibrary from "expo-media-library";
+import * as FileSystem from "expo-file-system";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { Colors, Typography, Radius } from "@/constants/theme";
 import { FontAwesome5 } from "@expo/vector-icons";
@@ -74,15 +72,25 @@ function maxSpeedKph(session: Doc<"sessions">): number {
 
 type Filter = "ALL" | "TODAY" | "EVENTS";
 
+type LocalClip = {
+  uri: string;
+  filename: string;
+  duration: number;  // seconds
+  createdAt: number; // ms timestamp
+  size: number;      // bytes
+};
+
+const RECORDINGS_DIR = FileSystem.documentDirectory + "recordings/";
+
 // ─── Local clip card ───────────────────────────────────────────────────────
 
 function LocalClipCard({
-  asset,
+  clip,
   onPlay,
   onShare,
   onDelete,
 }: {
-  asset: MediaLibrary.Asset;
+  clip: LocalClip;
   onPlay: () => void;
   onShare: () => void;
   onDelete: () => void;
@@ -90,13 +98,9 @@ function LocalClipCard({
   return (
     <View style={styles.clipCard}>
       <View style={styles.thumbBg}>
-        {asset.uri ? (
-          <Image source={{ uri: asset.uri }} style={styles.thumbImg} resizeMode="cover" />
-        ) : (
-          <FontAwesome5 name="video" size={28} color={Colors.outlineVariant} solid />
-        )}
+        <FontAwesome5 name="video" size={28} color={Colors.outlineVariant} solid />
         <View style={styles.thumbHud}>
-          <Text style={styles.thumbSpeed}>{formatSecsDuration(asset.duration)}</Text>
+          <Text style={styles.thumbSpeed}>{formatSecsDuration(clip.duration)}</Text>
         </View>
         <View style={styles.localBadge}>
           <FontAwesome5 name="hdd" size={7} color={Colors.tertiaryContainer} solid />
@@ -106,20 +110,20 @@ function LocalClipCard({
       <View style={styles.clipMeta}>
         <View style={styles.clipMetaRow}>
           <Text style={styles.clipDate} numberOfLines={1}>
-            {formatDate(asset.creationTime)}
+            {formatDate(clip.createdAt)}
           </Text>
           <View style={styles.resBadge}>
-            <Text style={styles.resBadgeText}>{formatFileSize((asset as any).fileSize ?? 0)}</Text>
+            <Text style={styles.resBadgeText}>{formatFileSize(clip.size)}</Text>
           </View>
         </View>
         <View style={styles.clipStats}>
           <View style={styles.stat}>
             <FontAwesome5 name="clock" size={9} color={Colors.outline} solid />
-            <Text style={styles.statText}>{formatSecsDuration(asset.duration)}</Text>
+            <Text style={styles.statText}>{formatSecsDuration(clip.duration)}</Text>
           </View>
           <View style={styles.stat}>
             <FontAwesome5 name="film" size={9} color={Colors.outline} solid />
-            <Text style={styles.statText}>{asset.filename}</Text>
+            <Text style={styles.statText} numberOfLines={1}>{clip.filename}</Text>
           </View>
         </View>
       </View>
@@ -204,17 +208,17 @@ function ClipCard({
 // ─── Video Player Modal ────────────────────────────────────────────────────
 
 function VideoPlayerModal({
-  asset,
+  clip,
   onClose,
   onShare,
   onDelete,
 }: {
-  asset: MediaLibrary.Asset;
+  clip: LocalClip;
   onClose: () => void;
   onShare: () => void;
   onDelete: () => void;
 }) {
-  const player = useVideoPlayer(asset.uri, (p) => { p.play(); });
+  const player = useVideoPlayer(clip.uri, (p) => { p.play(); });
   return (
     <Modal visible animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <View style={styles.playerContainer}>
@@ -241,29 +245,55 @@ export default function GalleryScreen() {
   const router = useRouter();
   const sessions = useQuery(api.queries.getSessionHistory, { limit: 50 });
   const [filter, setFilter] = useState<Filter>("ALL");
-  const [playingAsset, setPlayingAsset] = useState<MediaLibrary.Asset | null>(null);
+  const [playingClip, setPlayingClip] = useState<LocalClip | null>(null);
 
-  // Local recordings from device media library
-  const [localClips, setLocalClips] = useState<MediaLibrary.Asset[]>([]);
-  const [mediaPermission, setMediaPermission] = useState<"unknown" | "granted" | "denied">("unknown");
+  // Local recordings stored in app's private documents directory
+  const [localClips, setLocalClips] = useState<LocalClip[]>([]);
 
   const loadLocalClips = useCallback(async () => {
-    const { status } = await MediaLibrary.requestPermissionsAsync();
-    setMediaPermission(status === "granted" ? "granted" : "denied");
-    if (status !== "granted") return;
+    try {
+      await FileSystem.makeDirectoryAsync(RECORDINGS_DIR, { intermediates: true });
+      const files = await FileSystem.readDirectoryAsync(RECORDINGS_DIR);
+      const videoFiles = files.filter(f => f.endsWith(".mp4") || f.endsWith(".mov"));
 
-    const album = await MediaLibrary.getAlbumAsync("StreamCam");
-    if (!album) {
+      const clips: LocalClip[] = await Promise.all(
+        videoFiles.map(async (filename) => {
+          const uri = RECORDINGS_DIR + filename;
+          let duration = 0;
+          let createdAt = 0;
+          let size = 0;
+
+          // Try to read metadata sidecar written at save time
+          try {
+            const metaRaw = await FileSystem.readAsStringAsync(
+              uri.replace(/\.(mp4|mov)$/, ".json")
+            );
+            const meta = JSON.parse(metaRaw);
+            duration = meta.duration ?? 0;
+            createdAt = meta.createdAt ?? 0;
+          } catch (_) { /* no sidecar — fall back to filesystem info */ }
+
+          if (!createdAt) {
+            const info = await FileSystem.getInfoAsync(uri, { size: true });
+            createdAt = (info.exists && info.modificationTime)
+              ? info.modificationTime * 1000
+              : 0;
+            size = info.exists ? (info.size ?? 0) : 0;
+          } else {
+            const info = await FileSystem.getInfoAsync(uri, { size: true });
+            size = info.exists ? (info.size ?? 0) : 0;
+          }
+
+          return { uri, filename, duration, createdAt, size };
+        })
+      );
+
+      clips.sort((a, b) => b.createdAt - a.createdAt);
+      setLocalClips(clips);
+    } catch (err) {
+      console.error("[Gallery] loadLocalClips error", err);
       setLocalClips([]);
-      return;
     }
-    const { assets } = await MediaLibrary.getAssetsAsync({
-      mediaType: MediaLibrary.MediaType.video,
-      album,
-      first: 200,
-      sortBy: [[MediaLibrary.SortBy.creationTime, false]], // newest first
-    });
-    setLocalClips(assets);
   }, []);
 
   useFocusEffect(
@@ -272,57 +302,31 @@ export default function GalleryScreen() {
     }, [loadLocalClips])
   );
 
-  const handleShareClip = useCallback(async (asset: MediaLibrary.Asset) => {
-    await Sharing.shareAsync(asset.uri);
+  const handleShareClip = useCallback(async (clip: LocalClip) => {
+    await Sharing.shareAsync(clip.uri);
   }, []);
 
-  const handleDeleteClip = useCallback((asset: MediaLibrary.Asset) => {
+  const handleDeleteClip = useCallback((clip: LocalClip) => {
     Alert.alert(
       "Delete clip",
-      `"${asset.filename}" will be permanently removed from your device.`,
+      `"${clip.filename}" will be permanently removed.`,
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
-            const { status } = await MediaLibrary.requestPermissionsAsync();
-            if (status !== "granted") {
-              Alert.alert(
-                "Permission required",
-                "StreamDash needs media access to delete clips.",
-                [
-                  { text: "Cancel", style: "cancel" },
-                  { text: "Open Settings", onPress: () => Linking.openSettings() },
-                ]
-              );
-              return;
-            }
-
             try {
-              const deleted = await MediaLibrary.deleteAssetsAsync([asset.id]);
-              if (deleted) {
-                await loadLocalClips();
-              } else {
-                Alert.alert(
-                  "Unable to delete",
-                  'Enable "Manage media" for StreamDash in your device settings, then try again.',
-                  [
-                    { text: "Cancel", style: "cancel" },
-                    { text: "Open Settings", onPress: () => Linking.openSettings() },
-                  ]
-                );
-              }
+              await FileSystem.deleteAsync(clip.uri, { idempotent: true });
+              // Also remove the metadata sidecar if it exists
+              await FileSystem.deleteAsync(
+                clip.uri.replace(/\.(mp4|mov)$/, ".json"),
+                { idempotent: true }
+              );
+              await loadLocalClips();
             } catch (err) {
               console.error("[Gallery] delete error", err);
-              Alert.alert(
-                "Unable to delete",
-                'StreamDash couldn\'t delete this clip. Enable "Manage media" in Settings to allow it.',
-                [
-                  { text: "Cancel", style: "cancel" },
-                  { text: "Open Settings", onPress: () => Linking.openSettings() },
-                ]
-              );
+              Alert.alert("Error", "Could not delete this clip.");
             }
           },
         },
@@ -350,7 +354,7 @@ export default function GalleryScreen() {
     if (filter === "TODAY") {
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
-      return localClips.filter((a) => a.creationTime >= todayStart.getTime());
+      return localClips.filter((a) => a.createdAt >= todayStart.getTime());
     }
     return localClips;
   }, [localClips, filter]);
@@ -363,12 +367,12 @@ export default function GalleryScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
-      {playingAsset && (
+      {playingClip && (
         <VideoPlayerModal
-          asset={playingAsset}
-          onClose={() => setPlayingAsset(null)}
-          onShare={() => handleShareClip(playingAsset)}
-          onDelete={() => { setPlayingAsset(null); handleDeleteClip(playingAsset); }}
+          clip={playingClip}
+          onClose={() => setPlayingClip(null)}
+          onShare={() => handleShareClip(playingClip)}
+          onDelete={() => { setPlayingClip(null); handleDeleteClip(playingClip); }}
         />
       )}
       {/* Header */}
@@ -443,13 +447,13 @@ export default function GalleryScreen() {
                 <Text style={styles.sectionCount}>{filteredLocalClips.length}</Text>
               </View>
               <View style={styles.clipList}>
-                {filteredLocalClips.map((a) => (
+                {filteredLocalClips.map((c) => (
                   <LocalClipCard
-                    key={a.id}
-                    asset={a}
-                    onPlay={() => setPlayingAsset(a)}
-                    onShare={() => handleShareClip(a)}
-                    onDelete={() => handleDeleteClip(a)}
+                    key={c.uri}
+                    clip={c}
+                    onPlay={() => setPlayingClip(c)}
+                    onShare={() => handleShareClip(c)}
+                    onDelete={() => handleDeleteClip(c)}
                   />
                 ))}
               </View>
