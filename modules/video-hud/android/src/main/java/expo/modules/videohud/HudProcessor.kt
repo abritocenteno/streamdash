@@ -83,6 +83,8 @@ internal class HudProcessor {
 
   fun process(srcPath: String, dstPath: String, samples: List<GpsSample>) {
     File(dstPath).delete()
+    // Guard: throw after processing if the muxer wrote nothing (e.g. silent EGL failure)
+    var muxWroteFrames = false
 
     // ── 1. Probe input ────────────────────────────────────────────────────────
     val extractor = MediaExtractor().apply { setDataSource(srcPath) }
@@ -251,6 +253,7 @@ internal class HudProcessor {
               val buf = encoder.getOutputBuffer(eIdx)!!
               buf.position(info.offset); buf.limit(info.offset + info.size)
               muxer.writeSampleData(muxVideoTrack, buf, info)
+              muxWroteFrames = true
             }
             encoder.releaseOutputBuffer(eIdx, false)
             if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
@@ -296,12 +299,20 @@ internal class HudProcessor {
     GLES20.glDeleteProgram(videoProg)
     GLES20.glDeleteProgram(hudProg)
     GLES20.glDeleteBuffers(1, intArrayOf(vbo), 0)
+
+    hudBitmap?.recycle(); hudBitmap = null
+
+    check(muxWroteFrames) { "HUD processor produced 0 encoded frames — EGL/GL pipeline likely failed" }
   }
 
   // ── HUD bitmap upload ───────────────────────────────────────────────────────
+  // Reuse a single bitmap to avoid per-frame allocations at high resolutions.
+  private var hudBitmap: Bitmap? = null
 
   private fun uploadHud(texId: Int, width: Int, height: Int, s: GpsSample?) {
-    val bmp    = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val bmp = hudBitmap?.takeIf { it.width == width && it.height == height }
+      ?: Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { hudBitmap = it }
+    bmp.eraseColor(Color.TRANSPARENT)
     val canvas = Canvas(bmp)
 
     if (s != null) {
@@ -358,7 +369,6 @@ internal class HudProcessor {
     GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texId)
     GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bmp, 0)
-    bmp.recycle()
   }
 
   // ── GL draw calls ───────────────────────────────────────────────────────────

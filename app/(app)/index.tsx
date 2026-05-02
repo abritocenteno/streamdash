@@ -269,6 +269,11 @@ function DashcamView() {
         const outPath = outUri.replace(/^file:\/\//, "");
         const samples = recordingGpsRef.current;
 
+        // Ensure video.path is a file:// URI for FileSystem operations
+        const videoUri = video.path.startsWith("file://")
+          ? video.path
+          : "file://" + video.path;
+
         try {
           await burnHud(srcPath, outPath, samples);
         } catch (err) {
@@ -277,7 +282,9 @@ function DashcamView() {
           const origFilename = `streamdash_${ts}_orig.mp4`;
           const origUri = recDir + origFilename;
           try {
-            await FileSystem.copyAsync({ from: video.path, to: origUri });
+            await FileSystem.copyAsync({ from: videoUri, to: origUri });
+            const meta = JSON.stringify({ duration: video.duration, createdAt: ts });
+            await FileSystem.writeAsStringAsync(origUri.replace(/\.mp4$/, ".json"), meta);
           } catch (e) {
             console.error("[DashcamScreen] fallback copy failed:", e);
           }
