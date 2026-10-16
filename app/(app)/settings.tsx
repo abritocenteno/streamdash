@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   ScrollView,
   StyleSheet,
@@ -390,6 +391,13 @@ export default function SettingsScreen() {
             </TouchableOpacity>
           )}
 
+          <Text style={styles.credit}>
+            Powered by{" "}
+            <Text style={styles.creditLink} onPress={() => Linking.openURL("https://prikichilabs.com")}>
+              Prikichi Labs
+            </Text>
+          </Text>
+
           <View style={{ height: 40 }} />
         </ScrollView>
       </KeyboardAvoidingView>
@@ -398,6 +406,16 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
+  credit: {
+    marginTop: 24,
+    textAlign: "center",
+    fontFamily: Typography.body,
+    fontSize: 12,
+    color: Colors.outline,
+  },
+  creditLink: {
+    textDecorationLine: "underline",
+  },
   container: {
     flex: 1,
     backgroundColor: Colors.background,
